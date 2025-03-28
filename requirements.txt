@@ -1,0 +1,38 @@
+# FastAPI and ASGI server
+fastapi==0.109.0
+uvicorn==0.27.0
+python-multipart==0.0.6
+
+# Database
+SQLAlchemy==2.0.25
+pymysql==1.1.0
+cryptography==41.0.7  # 用于MySQL加密连接
+alembic==1.13.1  # 数据库迁移工具
+
+# Data validation
+pydantic==2.5.3
+pydantic-settings==2.1.0
+email-validator==2.1.0.post1
+
+# Environment variables
+python-dotenv==1.0.0
+
+# Date and time handling
+python-dateutil==2.8.2
+
+# CORS
+starlette==0.35.0
+
+# JWT tokens
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Testing
+pytest==7.4.4
+httpx==0.26.0
+pytest-cov==4.1.0
+
+# Development tools
+black==23.12.1  # 代码格式化
+flake8==7.0.0   # 代码检查
+mypy==1.8.0     # 类型检查 
