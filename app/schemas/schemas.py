@@ -14,20 +14,21 @@ class RobotBodyType(str, Enum):
 
 class RobotBase(BaseModel):
     name: str = Field(..., description="机器人名称")
-    parameters: Dict[str, Any] = Field(default_factory=dict, description="参数配置")
-    body_type: RobotBodyType = Field(..., description="机器人体型类别")
-    brand: str = Field(..., description="品牌名称")
-    price: float = Field(..., description="单价")
-    serial_number: str = Field(..., description="编号")
-    create_date: datetime = Field(default_factory=datetime.now, description="创建日期")
-    remarks: Optional[str] = Field(None, description="备注说明")
+    robot_type: str = Field(..., description="机器人类型-第一代")
+    industry_type: str = Field(..., description="种类-工业机器人")
+    product_series: Optional[str] = Field(None, description="品牌-外骨")
+    price: Optional[float] = Field(None, description="单价-10000")
+    serial_number: str = Field(..., description="编号-89757")
+    create_date: str = Field(..., description="创建日期-202503201900")
+    status: Optional[str] = Field(None, description="状态：在线/离线/故障")
+    training_status: Optional[str] = Field(None, description="训练状态：上线/培训中/上市中")
+    skills: Optional[str] = Field(None, description="技能特点")
+    awards: Optional[str] = Field(None, description="获得的荣誉")
+    product_location: Optional[str] = Field(None, description="产地")
+    dimensions: Optional[str] = Field(None, description="参考重量尺寸")
     image_url: Optional[str] = Field(None, description="图片地址")
-    weight: Optional[float] = Field(None, description="重量(kg)")
-    length: Optional[float] = Field(None, description="长度(mm)")
-    width: Optional[float] = Field(None, description="宽度(mm)")
-    height: Optional[float] = Field(None, description="高度(mm)")
-    skills: List[str] = Field(default_factory=list, description="技能特点")
-    origin: str = Field(..., description="产地")
+    remarks: Optional[str] = Field(None, description="备注说明")
+    is_active: bool = Field(default=True, description="是否在用")
 
 class RobotCreate(RobotBase):
     pass
@@ -40,15 +41,124 @@ class Robot(RobotBase):
 
 class TrainingFieldBase(BaseModel):
     name: str = Field(..., description="训练场名称")
-    description: Optional[str] = Field(None, description="训练场描述")
-    scene_image_url: Optional[str] = Field(None, description="场景图片地址")
-    monitor_image_url: Optional[str] = Field(None, description="监控画面地址")
+    description: Optional[str] = Field(None, description="训练场说明")
+    image_url: Optional[str] = Field(None, description="图片地址")
 
 class TrainingFieldCreate(TrainingFieldBase):
     pass
 
 class TrainingField(TrainingFieldBase):
     id: int
+    create_time: datetime
+
+    class Config:
+        from_attributes = True
+
+class CompanyBase(BaseModel):
+    name: str = Field(..., description="公司名称")
+    description: Optional[str] = Field(None, description="简介")
+    address: Optional[str] = Field(None, description="地址")
+    contact: Optional[str] = Field(None, description="联系方式")
+    expiry_time: Optional[datetime] = Field(None, description="到期时间-202504031600")
+
+class CompanyCreate(CompanyBase):
+    pass
+
+class Company(CompanyBase):
+    id: int
+    create_time: datetime
+
+    class Config:
+        from_attributes = True
+
+class AwardBase(BaseModel):
+    name: str = Field(..., description="荣誉名称")
+    description: Optional[str] = Field(None, description="荣誉说明")
+    issue_date: Optional[datetime] = Field(None, description="颁发日期")
+    image_url: Optional[str] = Field(None, description="证书图片地址")
+
+class AwardCreate(AwardBase):
+    pass
+
+class Award(AwardBase):
+    id: int
+    create_time: datetime
+
+    class Config:
+        from_attributes = True
+
+class VideoBase(BaseModel):
+    title: Optional[str] = Field(None, description="视频标题")
+    url: str = Field(..., description="视频地址")
+    type: str = Field(..., description="类型：在线流/本地视频")
+    description: Optional[str] = Field(None, description="视频描述")
+
+class VideoCreate(VideoBase):
+    pass
+
+class Video(VideoBase):
+    id: int
+    create_time: datetime
+
+    class Config:
+        from_attributes = True
+
+class VisitorRecordBase(BaseModel):
+    visit_date: datetime = Field(..., description="参观日期")
+    visitor_count: int = Field(default=0, description="参观人数")
+
+class VisitorRecordCreate(VisitorRecordBase):
+    pass
+
+class VisitorRecord(VisitorRecordBase):
+    id: int
+    create_time: datetime
+
+    class Config:
+        from_attributes = True
+
+class DataTypeBase(BaseModel):
+    name: str = Field(..., description="数据类型名称")
+    description: Optional[str] = Field(None, description="类型说明")
+    unit: Optional[str] = Field(None, description="单位")
+
+class DataTypeCreate(DataTypeBase):
+    pass
+
+class DataType(DataTypeBase):
+    id: int
+    create_time: datetime
+
+    class Config:
+        from_attributes = True
+
+class DataRecordBase(BaseModel):
+    data_type_id: int = Field(..., description="数据类型ID")
+    value: str = Field(..., description="采集的数据值")
+    collect_time: datetime = Field(..., description="采集时间")
+
+class DataRecordCreate(DataRecordBase):
+    pass
+
+class DataRecord(DataRecordBase):
+    id: int
+    create_time: datetime
+
+    class Config:
+        from_attributes = True
+
+class WebConfigBase(BaseModel):
+    key: str = Field(..., description="配置键")
+    value: Optional[str] = Field(None, description="配置值")
+    description: Optional[str] = Field(None, description="配置说明")
+
+class WebConfigCreate(WebConfigBase):
+    pass
+
+class WebConfig(WebConfigBase):
+    id: int
+    create_time: datetime
+    update_time: Optional[datetime]
 
     class Config:
         from_attributes = True
@@ -66,40 +176,7 @@ class TrainingRecordCreate(TrainingRecordBase):
 
 class TrainingRecord(TrainingRecordBase):
     id: int
-
-    class Config:
-        from_attributes = True
-
-class AwardType(str, Enum):
-    """获奖类型枚举"""
-    ROBOT = "robot"  # 机器人获奖
-    FIELD = "field"  # 训练场获奖
-
-class AwardRecordBase(BaseModel):
-    award_name: str = Field(..., description="奖项名称")
-    award_level: str = Field(..., description="奖项级别")
-    issuing_authority: str = Field(..., description="颁发机构")
-    award_date: datetime = Field(..., description="获奖日期")
-    certificate_image: Optional[str] = Field(None, description="证书图片地址")
-    award_type: AwardType = Field(..., description="获奖类型：robot或field")
-    robot_id: Optional[int] = Field(None, description="获奖机器人ID")
-    field_id: Optional[int] = Field(None, description="获奖训练场ID")
-    description: Optional[str] = Field(None, description="奖项描述")
-
-    @validator('robot_id', 'field_id')
-    def validate_ids(cls, v, values):
-        if 'award_type' in values:
-            if values['award_type'] == AwardType.ROBOT and not v and 'robot_id' in values.keys():
-                raise ValueError('robot_id is required when award_type is robot')
-            if values['award_type'] == AwardType.FIELD and not v and 'field_id' in values.keys():
-                raise ValueError('field_id is required when award_type is field')
-        return v
-
-class AwardRecordCreate(AwardRecordBase):
-    pass
-
-class AwardRecord(AwardRecordBase):
-    id: int
+    create_time: datetime
 
     class Config:
         from_attributes = True
@@ -113,6 +190,7 @@ class ParticipationRecordCreate(ParticipationRecordBase):
 
 class ParticipationRecord(ParticipationRecordBase):
     id: int
+    create_time: datetime
 
     class Config:
         from_attributes = True
