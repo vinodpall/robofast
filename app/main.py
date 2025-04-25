@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from app.api.endpoints import router
 from app.database.database import engine
 from app.models import models
+import os
 
 # 创建数据库表
 models.Base.metadata.create_all(bind=engine)
@@ -22,5 +24,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 配置静态文件服务
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 # 包含路由
-app.include_router(router, prefix="/api") 
+app.include_router(router, prefix="/api")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    # 关闭数据库连接
+    await engine.dispose()
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000) 

@@ -1,29 +1,43 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean, Table
 from sqlalchemy.orm import relationship
 from app.database.database import Base
 from datetime import datetime
+
+# 公司-荣誉关联表
+company_award = Table(
+    'company_award',
+    Base.metadata,
+    Column('company_id', Integer, ForeignKey('companies.id'), primary_key=True),
+    Column('award_id', Integer, ForeignKey('awards.id'), primary_key=True)
+)
 
 class Robot(Base):
     """机器人表"""
     __tablename__ = "robots"
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(50), nullable=False)  # 机器人名称
-    robot_type = Column(String(50), nullable=False)  # 机器人类型-第一代
-    industry_type = Column(String(50), nullable=False)  # 种类-工业机器人
-    product_series = Column(String(50))  # 品牌-外骨
+    name = Column(String(100))  # 机器人名称
+    industry_type = Column(String(50))  # 种类-工业机器人
+    company_id = Column(Integer, ForeignKey("companies.id"))  # 品牌-外键关联公司表
     price = Column(Float)  # 单价-10000
-    serial_number = Column(String(50), unique=True)  # 编号-89757
+    serial_number = Column(String(50))  # 编号-89757
     create_date = Column(String(50))  # 创建日期-202503201900
     status = Column(String(20))  # 状态：在线/离线/故障
-    training_status = Column(String(50))  # 训练状态：上线/培训中/上市中
-    skills = Column(Text)  # 技能特点
-    awards = Column(Text)  # 获得的荣誉
+    skills = Column(String(200))  # 技能特点
     product_location = Column(String(100))  # 产地
     dimensions = Column(String(100))  # 参考重量尺寸
     image_url = Column(String(255))  # 图片地址
     remarks = Column(Text)  # 备注说明
-    is_active = Column(Boolean, default=True)  # 是否在用
+    training_field_id = Column(Integer, ForeignKey("training_fields.id"))  # 训练场-外键关联训练场表
+    awards = Column(String(500))  # 荣誉-字符串形式
+    recommendation_reason = Column(String(500))  # 推荐理由
+    is_carousel = Column(Boolean, default=False)  # 是否轮播
+    carousel_add_time = Column(String(50))  # 加入轮播时间-202504031214
+    
+    # 关系
+    company = relationship("Company", back_populates="robots")
+    training_field = relationship("TrainingField", back_populates="robots")
+    data_records = relationship("DataRecord", back_populates="robot")
 
 class TrainingField(Base):
     """训练场表"""
@@ -31,9 +45,11 @@ class TrainingField(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)  # 训练场名称
-    description = Column(Text)  # 训练场说明
-    image_url = Column(String(255))  # 图片地址
-    create_time = Column(DateTime, default=datetime.now)
+    description = Column(Text)  # 训练场简介
+    image_url = Column(String(255))  # 场景图片URL
+
+    # 关系
+    robots = relationship("Robot", back_populates="training_field")
 
 class Company(Base):
     """公司表"""
@@ -42,10 +58,12 @@ class Company(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)  # 公司名称
     description = Column(Text)  # 简介
-    address = Column(String(255))  # 地址
-    contact = Column(String(50))  # 联系方式
-    create_time = Column(DateTime, default=datetime.now)
-    expiry_time = Column(DateTime)  # 到期时间-202504031600
+    is_carousel = Column(Boolean, default=False)  # 是否轮播
+    create_time = Column(String(50))  # 创建时间-202504031600
+    
+    # 关系
+    awards = relationship("Award", secondary=company_award, back_populates="companies")
+    robots = relationship("Robot", back_populates="company")
 
 class Award(Base):
     """荣誉证书表"""
@@ -53,30 +71,30 @@ class Award(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)  # 荣誉名称
-    description = Column(Text)  # 荣誉说明
-    issue_date = Column(DateTime)  # 颁发日期
-    image_url = Column(String(255))  # 证书图片地址
-    create_time = Column(DateTime, default=datetime.now)
+    description = Column(Text)  # 荣誉简介
+    image_url = Column(String(255))  # 图片URL
+    is_carousel = Column(Boolean, default=False)  # 是否轮播
+
+    # 关系
+    companies = relationship("Company", secondary=company_award, back_populates="awards")
 
 class Video(Base):
     """视频表"""
     __tablename__ = "videos"
     
     id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(100))  # 视频标题
-    url = Column(String(255), nullable=False)  # 视频地址
-    type = Column(String(20))  # 类型：在线流/本地视频
-    description = Column(Text)  # 视频描述
-    create_time = Column(DateTime, default=datetime.now)
+    url = Column(String(255), nullable=False)  # 视频URL
+    name = Column(String(100))  # 视频名称
+    type = Column(String(20))  # 类型：RTSP/LOCAL
+    carousel_add_time = Column(String(50))  # 加入轮播时间-202504032000
 
 class VisitorRecord(Base):
     """参观记录表"""
     __tablename__ = "visitor_records"
     
     id = Column(Integer, primary_key=True, index=True)
-    visit_date = Column(DateTime, nullable=False)  # 参观日期
     visitor_count = Column(Integer, default=0)  # 参观人数
-    create_time = Column(DateTime, default=datetime.now)
+    visit_date = Column(String(50))  # 时间-20250420
 
 class DataType(Base):
     """数据类型表"""
@@ -84,29 +102,32 @@ class DataType(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(50), nullable=False)  # 数据类型名称
-    description = Column(Text)  # 类型说明
-    unit = Column(String(20))  # 单位
-    create_time = Column(DateTime, default=datetime.now)
 
 class DataRecord(Base):
     """数据采集记录表"""
     __tablename__ = "data_records"
     
     id = Column(Integer, primary_key=True, index=True)
-    data_type_id = Column(Integer, ForeignKey("data_types.id"))  # 数据类型ID
-    value = Column(String(255))  # 采集的数据值
-    collect_time = Column(DateTime)  # 采集时间
-    create_time = Column(DateTime, default=datetime.now)
+    data_type_id = Column(Integer, ForeignKey("data_types.id"))  # 数据类型-外键关联数据类型表
+    collect_date = Column(String(50))  # 时间-20250402
+    robot_id = Column(Integer, ForeignKey("robots.id"))  # 机器人-外键关联机器人表
+    count = Column(Integer)  # 数量
     
+    # 关系
     data_type = relationship("DataType", backref="records")
+    robot = relationship("Robot", back_populates="data_records")
 
 class WebConfig(Base):
     """网页配置信息表"""
     __tablename__ = "web_configs"
     
     id = Column(Integer, primary_key=True, index=True)
-    key = Column(String(50), unique=True, nullable=False)  # 配置键
-    value = Column(Text)  # 配置值
-    description = Column(Text)  # 配置说明
-    create_time = Column(DateTime, default=datetime.now)
-    update_time = Column(DateTime, onupdate=datetime.now) 
+    name = Column(String(100), nullable=False)  # 网页名称
+    icon_url = Column(String(255))  # 图标URL
+    video_carousel = Column(Boolean, default=False)  # 视频是否轮播
+    page_carousel = Column(Boolean, default=False)  # 网页是否轮播
+    current_carousel_page = Column(Integer)  # 当前轮播页
+    first_page_duration = Column(Integer)  # 第一页停留时间(秒)
+    second_page_duration = Column(Integer)  # 第二页停留时间(秒)
+    third_page_duration = Column(Integer)  # 第三页停留时间(秒)
+    visitor_count = Column(Integer)  # 来访人数统计 
