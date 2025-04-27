@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from app.database.database import get_db
 from app.models import models
@@ -73,14 +73,38 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         participation_trend=participation_trend
     )
 
-@router.get("/robots", response_model=List[schemas.Robot])
-def get_robots(db: Session = Depends(get_db)):
+@router.get("/robots", response_model=schemas.PaginatedResponse[schemas.Robot])
+def get_robots(
+    page: int = 1,
+    page_size: int = 10,
+    db: Session = Depends(get_db)
+):
     """获取所有机器人列表"""
     try:
-        logger.info("获取机器人列表")
-        robots = db.query(models.Robot).all()
+        logger.info(f"获取机器人列表: page={page}, page_size={page_size}")
+        
+        # 计算总数
+        total = db.query(models.Robot).count()
+        
+        # 计算总页数
+        total_pages = (total + page_size - 1) // page_size
+        
+        # 获取分页数据
+        robots = db.query(models.Robot).options(
+            joinedload(models.Robot.company),
+            joinedload(models.Robot.training_field),
+            joinedload(models.Robot.data_records)
+        ).offset((page - 1) * page_size).limit(page_size).all()
+        
         logger.info(f"找到 {len(robots)} 个机器人")
-        return robots
+        
+        return schemas.PaginatedResponse(
+            items=robots,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
     except Exception as e:
         logger.error(f"获取机器人列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -90,7 +114,11 @@ def get_robot(robot_id: int, db: Session = Depends(get_db)):
     """获取单个机器人详情"""
     try:
         logger.info(f"获取机器人详情: ID={robot_id}")
-        robot = db.query(models.Robot).filter(models.Robot.id == robot_id).first()
+        robot = db.query(models.Robot).options(
+            joinedload(models.Robot.company),
+            joinedload(models.Robot.training_field),
+            joinedload(models.Robot.data_records)
+        ).filter(models.Robot.id == robot_id).first()
         if not robot:
             logger.warning(f"未找到机器人: ID={robot_id}")
             raise HTTPException(status_code=404, detail="Robot not found")
@@ -181,18 +209,57 @@ def delete_robot(robot_id: int, db: Session = Depends(get_db)):
         logger.error(f"删除机器人失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/training-fields", response_model=List[schemas.TrainingField])
-def get_training_fields(db: Session = Depends(get_db)):
+@router.get("/training-fields", response_model=schemas.PaginatedResponse[schemas.TrainingField])
+def get_training_fields(
+    page: int = 1,
+    page_size: int = 10,
+    db: Session = Depends(get_db)
+):
     """获取所有训练场列表"""
-    return db.query(models.TrainingField).all()
+    try:
+        logger.info(f"获取训练场列表: page={page}, page_size={page_size}")
+        
+        # 计算总数
+        total = db.query(models.TrainingField).count()
+        
+        # 计算总页数
+        total_pages = (total + page_size - 1) // page_size
+        
+        # 获取分页数据
+        fields = db.query(models.TrainingField).options(
+            joinedload(models.TrainingField.robots)
+        ).offset((page - 1) * page_size).limit(page_size).all()
+        
+        logger.info(f"找到 {len(fields)} 个训练场")
+        
+        return schemas.PaginatedResponse(
+            items=fields,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+    except Exception as e:
+        logger.error(f"获取训练场列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/training-fields/{field_id}", response_model=schemas.TrainingField)
 def get_training_field(field_id: int, db: Session = Depends(get_db)):
     """获取单个训练场详情"""
-    field = db.query(models.TrainingField).filter(models.TrainingField.id == field_id).first()
-    if not field:
-        raise HTTPException(status_code=404, detail="Training field not found")
-    return field
+    try:
+        logger.info(f"获取训练场详情: ID={field_id}")
+        field = db.query(models.TrainingField).options(
+            joinedload(models.TrainingField.robots)
+        ).filter(models.TrainingField.id == field_id).first()
+        if not field:
+            logger.warning(f"未找到训练场: ID={field_id}")
+            raise HTTPException(status_code=404, detail="Training field not found")
+        return field
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"获取训练场详情失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/training-fields", response_model=schemas.TrainingField)
 def create_training_field(field: schemas.TrainingFieldCreate, db: Session = Depends(get_db)):
@@ -282,18 +349,57 @@ def delete_award(award_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Award deleted successfully"}
 
-@router.get("/companies", response_model=List[schemas.Company])
-def get_companies(db: Session = Depends(get_db)):
+@router.get("/companies", response_model=schemas.PaginatedResponse[schemas.Company])
+def get_companies(
+    page: int = 1,
+    page_size: int = 10,
+    db: Session = Depends(get_db)
+):
     """获取所有公司列表"""
-    return db.query(models.Company).all()
+    try:
+        logger.info(f"获取公司列表: page={page}, page_size={page_size}")
+        
+        # 计算总数
+        total = db.query(models.Company).count()
+        
+        # 计算总页数
+        total_pages = (total + page_size - 1) // page_size
+        
+        # 获取分页数据
+        companies = db.query(models.Company).options(
+            joinedload(models.Company.awards)
+        ).offset((page - 1) * page_size).limit(page_size).all()
+        
+        logger.info(f"找到 {len(companies)} 个公司")
+        
+        return schemas.PaginatedResponse(
+            items=companies,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+    except Exception as e:
+        logger.error(f"获取公司列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/companies/{company_id}", response_model=schemas.Company)
 def get_company(company_id: int, db: Session = Depends(get_db)):
     """获取单个公司详情"""
-    company = db.query(models.Company).filter(models.Company.id == company_id).first()
-    if not company:
-        raise HTTPException(status_code=404, detail="Company not found")
-    return company
+    try:
+        logger.info(f"获取公司详情: ID={company_id}")
+        company = db.query(models.Company).options(
+            joinedload(models.Company.awards)
+        ).filter(models.Company.id == company_id).first()
+        if not company:
+            logger.warning(f"未找到公司: ID={company_id}")
+            raise HTTPException(status_code=404, detail="Company not found")
+        return company
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"获取公司详情失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/companies", response_model=schemas.Company)
 def create_company(company: schemas.CompanyCreate, db: Session = Depends(get_db)):
@@ -520,8 +626,10 @@ def delete_data_type(type_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Data type deleted successfully"}
 
-@router.get("/data-records", response_model=List[schemas.DataRecord])
+@router.get("/data-records", response_model=schemas.PaginatedResponse[schemas.DataRecord])
 def get_data_records(
+    page: int = 1,
+    page_size: int = 10,
     data_type_id: Optional[int] = None,
     robot_id: Optional[int] = None,
     start_date: Optional[str] = None,
@@ -529,26 +637,65 @@ def get_data_records(
     db: Session = Depends(get_db)
 ):
     """获取数据采集记录列表"""
-    query = db.query(models.DataRecord)
-    
-    if data_type_id:
-        query = query.filter(models.DataRecord.data_type_id == data_type_id)
-    if robot_id:
-        query = query.filter(models.DataRecord.robot_id == robot_id)
-    if start_date:
-        query = query.filter(models.DataRecord.collect_date >= start_date)
-    if end_date:
-        query = query.filter(models.DataRecord.collect_date <= end_date)
-    
-    return query.all()
+    try:
+        logger.info(f"获取数据采集记录列表: page={page}, page_size={page_size}")
+        
+        # 构建查询
+        query = db.query(models.DataRecord).options(
+            joinedload(models.DataRecord.data_type),
+            joinedload(models.DataRecord.robot)
+        )
+        
+        # 添加过滤条件
+        if data_type_id:
+            query = query.filter(models.DataRecord.data_type_id == data_type_id)
+        if robot_id:
+            query = query.filter(models.DataRecord.robot_id == robot_id)
+        if start_date:
+            query = query.filter(models.DataRecord.collect_date >= start_date)
+        if end_date:
+            query = query.filter(models.DataRecord.collect_date <= end_date)
+        
+        # 计算总数
+        total = query.count()
+        
+        # 计算总页数
+        total_pages = (total + page_size - 1) // page_size
+        
+        # 获取分页数据
+        records = query.offset((page - 1) * page_size).limit(page_size).all()
+        
+        logger.info(f"找到 {len(records)} 条记录")
+        
+        return schemas.PaginatedResponse(
+            items=records,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+    except Exception as e:
+        logger.error(f"获取数据采集记录列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/data-records/{record_id}", response_model=schemas.DataRecord)
 def get_data_record(record_id: int, db: Session = Depends(get_db)):
     """获取单个数据采集记录详情"""
-    record = db.query(models.DataRecord).filter(models.DataRecord.id == record_id).first()
-    if not record:
-        raise HTTPException(status_code=404, detail="Data record not found")
-    return record
+    try:
+        logger.info(f"获取数据采集记录详情: ID={record_id}")
+        record = db.query(models.DataRecord).options(
+            joinedload(models.DataRecord.data_type),
+            joinedload(models.DataRecord.robot)
+        ).filter(models.DataRecord.id == record_id).first()
+        if not record:
+            logger.warning(f"未找到数据采集记录: ID={record_id}")
+            raise HTTPException(status_code=404, detail="Data record not found")
+        return record
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"获取数据采集记录详情失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/data-records", response_model=schemas.DataRecord)
 def create_data_record(record: schemas.DataRecordCreate, db: Session = Depends(get_db)):

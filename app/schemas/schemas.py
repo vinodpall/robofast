@@ -1,9 +1,29 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, ForwardRef, Generic, TypeVar
 from enum import Enum
 from pydantic import validator
 
+# 定义泛型类型变量
+T = TypeVar('T')
+
+# 分页响应模型
+class PaginatedResponse(BaseModel, Generic[T]):
+    items: List[T]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+    @property
+    def has_next(self) -> bool:
+        return self.page < self.total_pages
+
+    @property
+    def has_prev(self) -> bool:
+        return self.page > 1
+
+# 1. 基础枚举类型
 class RobotBodyType(str, Enum):
     """机器人体型类别枚举"""
     HUMANOID = "humanoid"  # 人形机器人
@@ -11,6 +31,27 @@ class RobotBodyType(str, Enum):
     QUADRUPED = "quadruped"  # 四足机器人
     AERIAL = "aerial"      # 空中机器人
     OTHER = "other"        # 其他类型
+
+# 2. 基础模型类
+class CompanyBase(BaseModel):
+    name: str = Field(..., description="公司名称")
+    description: Optional[str] = Field(None, description="简介")
+    is_carousel: bool = Field(default=False, description="是否轮播")
+    create_time: Optional[str] = Field(None, description="创建时间-202504031600")
+
+class TrainingFieldBase(BaseModel):
+    name: str = Field(..., description="训练场名称")
+    description: Optional[str] = Field(None, description="训练场简介")
+    image_url: Optional[str] = Field(None, description="场景图片URL")
+
+class AwardBase(BaseModel):
+    name: str = Field(..., description="荣誉名称")
+    description: Optional[str] = Field(None, description="荣誉简介")
+    image_url: Optional[str] = Field(None, description="图片URL")
+    is_carousel: bool = Field(default=False, description="是否轮播")
+
+class DataTypeBase(BaseModel):
+    name: str = Field(..., description="数据类型名称")
 
 class RobotBase(BaseModel):
     name: str = Field(..., description="机器人名称")
@@ -31,22 +72,60 @@ class RobotBase(BaseModel):
     is_carousel: bool = Field(default=False, description="是否轮播")
     carousel_add_time: Optional[str] = Field(None, description="加入轮播时间-202504031214")
 
+# 3. 创建模型类
+class AwardCreate(AwardBase):
+    pass
+
+class DataTypeCreate(DataTypeBase):
+    pass
+
+class DataRecordBase(BaseModel):
+    data_type_id: int = Field(..., description="数据类型-外键关联数据类型表")
+    collect_date: str = Field(..., description="时间-20250402")
+    robot_id: int = Field(..., description="机器人-外键关联机器人表")
+    count: int = Field(..., description="数量")
+
+class DataRecordCreate(DataRecordBase):
+    pass
+
 class RobotCreate(RobotBase):
     pass
 
-class Robot(RobotBase):
+class TrainingFieldCreate(TrainingFieldBase):
+    pass
+
+class CompanyCreate(CompanyBase):
+    award_ids: Optional[List[int]] = Field(default=None, description="荣誉ID列表")
+
+# 4. 完整模型类
+class Award(AwardBase):
     id: int
 
     class Config:
         from_attributes = True
 
-class TrainingFieldBase(BaseModel):
-    name: str = Field(..., description="训练场名称")
-    description: Optional[str] = Field(None, description="训练场简介")
-    image_url: Optional[str] = Field(None, description="场景图片URL")
+class DataType(DataTypeBase):
+    id: int
 
-class TrainingFieldCreate(TrainingFieldBase):
-    pass
+    class Config:
+        from_attributes = True
+
+class DataRecord(DataRecordBase):
+    id: int
+    data_type: Optional[DataType] = None
+    robot: Optional[ForwardRef("Robot")] = None
+
+    class Config:
+        from_attributes = True
+
+class Robot(RobotBase):
+    id: int
+    company: Optional[CompanyBase] = None
+    training_field: Optional[TrainingFieldBase] = None
+    data_records: List[ForwardRef("DataRecord")] = []
+
+    class Config:
+        from_attributes = True
 
 class TrainingField(TrainingFieldBase):
     id: int
@@ -54,37 +133,14 @@ class TrainingField(TrainingFieldBase):
     class Config:
         from_attributes = True
 
-class CompanyBase(BaseModel):
-    name: str = Field(..., description="公司名称")
-    description: Optional[str] = Field(None, description="简介")
-    is_carousel: bool = Field(default=False, description="是否轮播")
-    create_time: str = Field(..., description="创建时间-202504031600")
-
-class CompanyCreate(CompanyBase):
-    award_ids: Optional[List[int]] = Field(default=None, description="荣誉ID列表")
-
 class Company(CompanyBase):
     id: int
-    awards: Optional[List[Award]] = []
+    awards: List[Award] = []
 
     class Config:
         from_attributes = True
 
-class AwardBase(BaseModel):
-    name: str = Field(..., description="荣誉名称")
-    description: Optional[str] = Field(None, description="荣誉简介")
-    image_url: Optional[str] = Field(None, description="图片URL")
-    is_carousel: bool = Field(default=False, description="是否轮播")
-
-class AwardCreate(AwardBase):
-    pass
-
-class Award(AwardBase):
-    id: int
-
-    class Config:
-        from_attributes = True
-
+# 5. 其他模型类
 class VideoBase(BaseModel):
     url: str = Field(..., description="视频URL")
     name: Optional[str] = Field(None, description="视频名称")
@@ -108,33 +164,6 @@ class VisitorRecordCreate(VisitorRecordBase):
     pass
 
 class VisitorRecord(VisitorRecordBase):
-    id: int
-
-    class Config:
-        from_attributes = True
-
-class DataTypeBase(BaseModel):
-    name: str = Field(..., description="数据类型名称")
-
-class DataTypeCreate(DataTypeBase):
-    pass
-
-class DataType(DataTypeBase):
-    id: int
-
-    class Config:
-        from_attributes = True
-
-class DataRecordBase(BaseModel):
-    data_type_id: int = Field(..., description="数据类型-外键关联数据类型表")
-    collect_date: str = Field(..., description="时间-20250402")
-    robot_id: int = Field(..., description="机器人-外键关联机器人表")
-    count: int = Field(..., description="数量")
-
-class DataRecordCreate(DataRecordBase):
-    pass
-
-class DataRecord(DataRecordBase):
     id: int
 
     class Config:
@@ -204,4 +233,8 @@ class FileResponse(BaseModel):
     url: str
     
     class Config:
-        from_attributes = True 
+        from_attributes = True
+
+# 6. 更新前向引用
+Robot.model_rebuild()
+DataRecord.model_rebuild() 
