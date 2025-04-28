@@ -150,6 +150,14 @@ class DataRecordBase(BaseModel):
 class DataRecordCreate(DataRecordBase):
     pass
 
+class DataRecord(DataRecordBase):
+    id: int
+    data_type: Optional["DataType"] = None
+    robot: Optional["RobotBase"] = None
+
+    class Config:
+        from_attributes = True
+
 class RobotCreate(RobotBase):
     pass
 
@@ -172,19 +180,11 @@ class DataType(DataTypeBase):
     class Config:
         from_attributes = True
 
-class DataRecord(DataRecordBase):
-    id: int
-    data_type: Optional[DataType] = None
-    robot: Optional[ForwardRef("Robot")] = None
-
-    class Config:
-        from_attributes = True
-
 class Robot(RobotBase):
     id: int
     company: Optional[CompanyBase] = None
     training_field: Optional[TrainingFieldBase] = None
-    data_records: List[ForwardRef("DataRecord")] = []
+    data_records: List[DataRecord] = []
 
     class Config:
         from_attributes = True

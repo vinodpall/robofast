@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MYSQL_URL = os.getenv("MYSQL_URL", "mysql+pymysql://guhaha:1234@52.196.203.7/dxr")
+MYSQL_URL = os.getenv("MYSQL_URL", "mysql+pymysql://mac:1234@52.196.203.7/dxr")
 
 engine = create_engine(MYSQL_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

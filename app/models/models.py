@@ -1,7 +1,9 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean, Table
 from sqlalchemy.orm import relationship
+from sqlalchemy import event
 from app.database.database import Base
 from datetime import datetime
+from typing import List, Optional
 
 # 公司-荣誉关联表
 company_award = Table(
@@ -37,7 +39,13 @@ class Robot(Base):
     # 关系
     company = relationship("Company", back_populates="robots")
     training_field = relationship("TrainingField", back_populates="robots")
-    data_records = relationship("DataRecord", back_populates="robot")
+    data_records = relationship("DataRecord", back_populates="robot", lazy="selectin")
+
+# 添加事件监听器
+@event.listens_for(Robot, 'before_update')
+def set_carousel_add_time(mapper, connection, target):
+    if target.is_carousel and not target.carousel_add_time:
+        target.carousel_add_time = str(int(datetime.now().timestamp()))
 
 class TrainingField(Base):
     """训练场表"""
@@ -115,7 +123,7 @@ class DataRecord(Base):
     
     # 关系
     data_type = relationship("DataType", backref="records")
-    robot = relationship("Robot", back_populates="data_records")
+    robot = relationship("Robot", back_populates="data_records", lazy="selectin")
 
 class WebConfig(Base):
     """网页配置信息表"""

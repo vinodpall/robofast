@@ -8,12 +8,25 @@ from sqlalchemy import func, or_
 from datetime import datetime, timedelta
 import logging
 from app.utils.file_handler import save_upload_file
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# 自定义错误响应
+def error_response(status_code: int, detail: str, error_type: str = "error"):
+    return JSONResponse(
+        status_code=status_code,
+        content=jsonable_encoder({
+            "status": "error",
+            "error_type": error_type,
+            "detail": detail
+        })
+    )
 
 @router.get("/dashboard/stats", response_model=schemas.DashboardStats)
 def get_dashboard_stats(db: Session = Depends(get_db)):
@@ -126,8 +139,12 @@ def get_robots(
         # 计算总页数
         total_pages = (total + page_size - 1) // page_size
         
-        # 获取分页数据
-        robots = query.order_by(models.Robot.create_date.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        # 获取分页数据，优先显示轮播的机器人
+        robots = query.order_by(
+            models.Robot.is_carousel.desc(),
+            models.Robot.carousel_add_time.desc(),
+            models.Robot.create_date.desc()
+        ).offset((page - 1) * page_size).limit(page_size).all()
         
         logger.info(f"找到 {len(robots)} 个机器人")
         
@@ -673,11 +690,36 @@ def get_data_type(type_id: int, db: Session = Depends(get_db)):
 @router.post("/data-types", response_model=schemas.DataType)
 def create_data_type(data_type: schemas.DataTypeCreate, db: Session = Depends(get_db)):
     """创建新数据类型"""
-    db_data_type = models.DataType(**data_type.model_dump())
-    db.add(db_data_type)
-    db.commit()
-    db.refresh(db_data_type)
-    return db_data_type
+    try:
+        logger.info("创建新数据类型")
+        
+        # 检查名称是否已存在
+        existing_type = db.query(models.DataType).filter(
+            models.DataType.name == data_type.name
+        ).first()
+        
+        if existing_type:
+            logger.warning(f"数据类型名称已存在: {data_type.name}")
+            return error_response(
+                status_code=400,
+                detail=f"数据类型名称 '{data_type.name}' 已存在",
+                error_type="duplicate_name"
+            )
+        
+        db_data_type = models.DataType(**data_type.model_dump())
+        db.add(db_data_type)
+        db.commit()
+        db.refresh(db_data_type)
+        
+        logger.info(f"数据类型创建成功: ID={db_data_type.id}")
+        return db_data_type
+    except Exception as e:
+        logger.error(f"创建数据类型失败: {str(e)}")
+        return error_response(
+            status_code=500,
+            detail=f"创建数据类型失败: {str(e)}",
+            error_type="server_error"
+        )
 
 @router.put("/data-types/{type_id}", response_model=schemas.DataType)
 def update_data_type(type_id: int, data_type: schemas.DataTypeCreate, db: Session = Depends(get_db)):
@@ -778,11 +820,43 @@ def get_data_record(record_id: int, db: Session = Depends(get_db)):
 @router.post("/data-records", response_model=schemas.DataRecord)
 def create_data_record(record: schemas.DataRecordCreate, db: Session = Depends(get_db)):
     """创建新数据采集记录"""
-    db_record = models.DataRecord(**record.model_dump())
-    db.add(db_record)
-    db.commit()
-    db.refresh(db_record)
-    return db_record
+    try:
+        logger.info("创建新数据采集记录")
+        
+        # 验证数据类型是否存在
+        data_type = db.query(models.DataType).filter(models.DataType.id == record.data_type_id).first()
+        if not data_type:
+            logger.warning(f"未找到数据类型: ID={record.data_type_id}")
+            return error_response(
+                status_code=404,
+                detail=f"未找到ID为{record.data_type_id}的数据类型",
+                error_type="data_type_not_found"
+            )
+        
+        # 验证机器人是否存在
+        robot = db.query(models.Robot).filter(models.Robot.id == record.robot_id).first()
+        if not robot:
+            logger.warning(f"未找到机器人: ID={record.robot_id}")
+            return error_response(
+                status_code=404,
+                detail=f"未找到ID为{record.robot_id}的机器人",
+                error_type="robot_not_found"
+            )
+        
+        db_record = models.DataRecord(**record.model_dump())
+        db.add(db_record)
+        db.commit()
+        db.refresh(db_record)
+        
+        logger.info(f"数据采集记录创建成功: ID={db_record.id}")
+        return db_record
+    except Exception as e:
+        logger.error(f"创建数据采集记录失败: {str(e)}")
+        return error_response(
+            status_code=500,
+            detail=f"创建数据采集记录失败: {str(e)}",
+            error_type="server_error"
+        )
 
 @router.put("/data-records/{record_id}", response_model=schemas.DataRecord)
 def update_data_record(record_id: int, record: schemas.DataRecordCreate, db: Session = Depends(get_db)):
