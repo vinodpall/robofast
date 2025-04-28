@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional, List, Dict, Any, ForwardRef, Generic, TypeVar
+from typing import Optional, List, Dict, Any, ForwardRef, Generic, TypeVar, Union
 from enum import Enum
 from pydantic import validator
 
@@ -59,7 +59,7 @@ class RobotBase(BaseModel):
     company_id: int = Field(..., description="品牌-外键关联公司表")
     price: Optional[float] = Field(None, description="单价-10000")
     serial_number: str = Field(..., description="编号-89757")
-    create_date: str = Field(..., description="创建日期-202503201900")
+    create_date: Optional[Union[str, int]] = Field(None, description="创建时间")
     status: Optional[str] = Field(None, description="状态：在线/离线/故障")
     skills: Optional[str] = Field(None, description="技能特点")
     product_location: Optional[str] = Field(None, description="产地")
@@ -70,7 +70,69 @@ class RobotBase(BaseModel):
     awards: Optional[str] = Field(None, description="荣誉-字符串形式")
     recommendation_reason: Optional[str] = Field(None, description="推荐理由")
     is_carousel: bool = Field(default=False, description="是否轮播")
-    carousel_add_time: Optional[str] = Field(None, description="加入轮播时间-202504031214")
+    carousel_add_time: Optional[Union[str, int]] = Field(None, description="加入轮播时间")
+
+    @validator('image_url')
+    def validate_image_url(cls, v):
+        if not v:
+            return v
+        # 如果包含域名，只保留路径部分
+        if '://' in v:
+            v = v.split('://', 1)[1].split('/', 1)[1]
+        # 确保路径以 /static 开头，但避免重复添加
+        if not v.startswith('/static/'):
+            v = f"/static/{v.lstrip('/')}"
+        return v
+
+    @validator('create_date')
+    def validate_create_date(cls, v):
+        if not v:
+            return v
+        try:
+            if isinstance(v, str):
+                # 尝试不同的日期格式
+                formats = ["%Y%m%d%H%M", "%Y%m%d", "%Y-%m-%d %H:%M", "%Y-%m-%d"]
+                for fmt in formats:
+                    try:
+                        datetime.strptime(v, fmt)
+                        return v
+                    except ValueError:
+                        continue
+            elif isinstance(v, int):
+                # 验证时间戳
+                datetime.fromtimestamp(v)
+                return v
+            # 如果字符串是纯数字，也允许
+            if isinstance(v, str) and v.isdigit():
+                return v
+            raise ValueError("创建日期格式错误")
+        except Exception:
+            raise ValueError("创建日期格式错误")
+
+    @validator('carousel_add_time')
+    def validate_carousel_add_time(cls, v):
+        if not v:
+            return v
+        try:
+            if isinstance(v, str):
+                # 尝试不同的日期格式
+                formats = ["%Y%m%d%H%M", "%Y%m%d", "%Y-%m-%d %H:%M", "%Y-%m-%d", "%H:%M", "%H"]
+                for fmt in formats:
+                    try:
+                        datetime.strptime(v, fmt)
+                        return v
+                    except ValueError:
+                        continue
+                # 如果字符串是纯数字，也允许
+                if v.isdigit():
+                    return v
+            elif isinstance(v, int):
+                # 验证时间戳
+                datetime.fromtimestamp(v)
+                return v
+            raise ValueError("轮播时间格式错误")
+        except Exception:
+            raise ValueError("轮播时间格式错误")
 
 # 3. 创建模型类
 class AwardCreate(AwardBase):

@@ -4,7 +4,7 @@ from typing import List, Optional
 from app.database.database import get_db
 from app.models import models
 from app.schemas import schemas
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from datetime import datetime, timedelta
 import logging
 from app.utils.file_handler import save_upload_file
@@ -77,24 +77,57 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
 def get_robots(
     page: int = 1,
     page_size: int = 10,
+    name_or_serial: Optional[str] = None,
+    industry_type: Optional[str] = None,
+    training_field_id: Optional[int] = None,
+    status: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """获取所有机器人列表"""
     try:
         logger.info(f"获取机器人列表: page={page}, page_size={page_size}")
         
+        # 构建基础查询
+        query = db.query(models.Robot).options(
+            joinedload(models.Robot.company),
+            joinedload(models.Robot.training_field),
+            joinedload(models.Robot.data_records)
+        )
+        
+        # 添加筛选条件
+        if name_or_serial:
+            query = query.filter(
+                or_(
+                    models.Robot.name.ilike(f"%{name_or_serial}%"),
+                    models.Robot.serial_number.ilike(f"%{name_or_serial}%")
+                )
+            )
+        
+        if industry_type:
+            query = query.filter(models.Robot.industry_type == industry_type)
+        
+        if training_field_id:
+            query = query.filter(models.Robot.training_field_id == training_field_id)
+        
+        if status:
+            query = query.filter(models.Robot.status == status)
+        
+        if start_date:
+            query = query.filter(models.Robot.create_date >= start_date)
+        
+        if end_date:
+            query = query.filter(models.Robot.create_date <= end_date)
+        
         # 计算总数
-        total = db.query(models.Robot).count()
+        total = query.count()
         
         # 计算总页数
         total_pages = (total + page_size - 1) // page_size
         
         # 获取分页数据
-        robots = db.query(models.Robot).options(
-            joinedload(models.Robot.company),
-            joinedload(models.Robot.training_field),
-            joinedload(models.Robot.data_records)
-        ).offset((page - 1) * page_size).limit(page_size).all()
+        robots = query.order_by(models.Robot.create_date.desc()).offset((page - 1) * page_size).limit(page_size).all()
         
         logger.info(f"找到 {len(robots)} 个机器人")
         
@@ -105,6 +138,8 @@ def get_robots(
             page_size=page_size,
             total_pages=total_pages
         )
+    except HTTPException as he:
+        raise he
     except Exception as e:
         logger.error(f"获取机器人列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -134,27 +169,63 @@ def create_robot(robot: schemas.RobotCreate, db: Session = Depends(get_db)):
     """创建新机器人"""
     try:
         logger.info("创建新机器人")
+        
+        # 验证必填字段
+        if not robot.name:
+            raise HTTPException(status_code=422, detail="机器人名称不能为空")
+        if not robot.industry_type:
+            raise HTTPException(status_code=422, detail="机器人类型不能为空")
+        if not robot.company_id:
+            raise HTTPException(status_code=422, detail="所属公司不能为空")
+        if not robot.serial_number:
+            raise HTTPException(status_code=422, detail="序列号不能为空")
+        
         # 验证公司是否存在
-        if not db.query(models.Company).filter(models.Company.id == robot.company_id).first():
-            raise HTTPException(status_code=404, detail="Company not found")
+        company = db.query(models.Company).filter(models.Company.id == robot.company_id).first()
+        if not company:
+            logger.warning(f"未找到公司: ID={robot.company_id}")
+            raise HTTPException(status_code=404, detail=f"未找到ID为{robot.company_id}的公司")
         
         # 验证训练场是否存在（如果提供了训练场ID）
-        if robot.training_field_id and not db.query(models.TrainingField).filter(
-            models.TrainingField.id == robot.training_field_id
-        ).first():
-            raise HTTPException(status_code=404, detail="Training field not found")
+        if robot.training_field_id:
+            field = db.query(models.TrainingField).filter(models.TrainingField.id == robot.training_field_id).first()
+            if not field:
+                logger.warning(f"未找到训练场: ID={robot.training_field_id}")
+                raise HTTPException(status_code=404, detail=f"未找到ID为{robot.training_field_id}的训练场")
         
-        db_robot = models.Robot(**robot.model_dump())
+        # 验证价格（如果提供）
+        if robot.price is not None:
+            try:
+                price = float(robot.price)
+                if price < 0:
+                    raise HTTPException(status_code=422, detail="价格不能为负数")
+            except ValueError:
+                raise HTTPException(status_code=422, detail="价格必须是有效的数字")
+        
+        # 设置默认值
+        robot_data = robot.model_dump()
+        if not robot_data.get('create_date'):
+            robot_data['create_date'] = str(int(datetime.now().timestamp()))
+        if not robot_data.get('carousel_add_time'):
+            robot_data['carousel_add_time'] = "5"
+        
+        # 创建机器人
+        db_robot = models.Robot(**robot_data)
         db.add(db_robot)
         db.commit()
         db.refresh(db_robot)
+        
         logger.info(f"机器人创建成功: ID={db_robot.id}")
         return db_robot
+        
     except HTTPException as he:
         raise he
+    except ValueError as ve:
+        logger.error(f"数据验证失败: {str(ve)}")
+        raise HTTPException(status_code=422, detail=str(ve))
     except Exception as e:
         logger.error(f"创建机器人失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"创建机器人失败: {str(e)}")
 
 @router.put("/robots/{robot_id}", response_model=schemas.Robot)
 def update_robot(robot_id: int, robot: schemas.RobotCreate, db: Session = Depends(get_db)):
@@ -176,7 +247,14 @@ def update_robot(robot_id: int, robot: schemas.RobotCreate, db: Session = Depend
         ).first():
             raise HTTPException(status_code=404, detail="Training field not found")
         
-        for key, value in robot.model_dump().items():
+        # 设置默认值
+        robot_data = robot.model_dump()
+        if not robot_data.get('create_date'):
+            robot_data['create_date'] = str(int(datetime.now().timestamp()))
+        if not robot_data.get('carousel_add_time'):
+            robot_data['carousel_add_time'] = "5"
+        
+        for key, value in robot_data.items():
             setattr(db_robot, key, value)
         
         db.commit()
