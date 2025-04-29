@@ -142,7 +142,7 @@ class DataTypeCreate(DataTypeBase):
     pass
 
 class DataRecordBase(BaseModel):
-    data_type_id: int = Field(..., description="数据类型-外键关联数据类型表")
+    data_type_id: Optional[int] = Field(None, description="数据类型-外键关联数据类型表")
     collect_date: str = Field(..., description="时间-20250402")
     robot_id: int = Field(..., description="机器人-外键关联机器人表")
     count: int = Field(..., description="数量")
@@ -204,10 +204,19 @@ class Company(CompanyBase):
 
 # 5. 其他模型类
 class VideoBase(BaseModel):
-    url: str = Field(..., description="视频URL")
-    name: Optional[str] = Field(None, description="视频名称")
-    type: str = Field(..., description="类型：RTSP/LOCAL")
-    carousel_add_time: Optional[str] = Field(None, description="加入轮播时间-202504032000")
+    name: str = Field(..., description="视频名称")
+    description: Optional[str] = Field(None, description="视频简介")
+    url: Optional[str] = Field(None, description="视频URL")
+    type: Optional[str] = Field(None, description="视频类型")
+    is_carousel: bool = Field(default=False, description="是否轮播")
+    carousel_add_time: Optional[str] = Field(None, description="加入轮播时间")
+    create_time: Optional[str] = Field(None, description="创建时间-时间戳字符串")
+
+    @validator('url')
+    def validate_url(cls, v):
+        if not v:
+            return v
+        return v
 
 class VideoCreate(VideoBase):
     pass
@@ -241,6 +250,9 @@ class WebConfigBase(BaseModel):
     second_page_duration: Optional[int] = Field(None, description="第二页停留时间(秒)")
     third_page_duration: Optional[int] = Field(None, description="第三页停留时间(秒)")
     visitor_count: Optional[int] = Field(None, description="来访人数统计")
+    weekly_visitor_count: Optional[int] = Field(None, description="本周访客数")
+    monthly_visitor_count: Optional[int] = Field(None, description="本月访客数")
+    video_carousel_duration: Optional[int] = Field(None, description="视频轮播停留时间(秒)")
 
 class WebConfigCreate(WebConfigBase):
     pass

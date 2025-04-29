@@ -91,10 +91,13 @@ class Video(Base):
     __tablename__ = "videos"
     
     id = Column(Integer, primary_key=True, index=True)
-    url = Column(String(255), nullable=False)  # 视频URL
-    name = Column(String(100))  # 视频名称
-    type = Column(String(20))  # 类型：RTSP/LOCAL
-    carousel_add_time = Column(String(50))  # 加入轮播时间-202504032000
+    name = Column(String(100), nullable=False)  # 视频名称
+    description = Column(Text)  # 视频简介
+    url = Column(String(255))  # 视频URL
+    type = Column(String(20))  # 视频类型
+    is_carousel = Column(Boolean, default=False)  # 是否轮播
+    carousel_add_time = Column(String(50))  # 加入轮播时间
+    create_time = Column(String(50))  # 创建时间-时间戳字符串
 
 class VisitorRecord(Base):
     """参观记录表"""
@@ -130,12 +133,15 @@ class WebConfig(Base):
     __tablename__ = "web_configs"
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)  # 网页名称
-    icon_url = Column(String(255))  # 图标URL
-    video_carousel = Column(Boolean, default=False)  # 视频是否轮播
-    page_carousel = Column(Boolean, default=False)  # 网页是否轮播
-    current_carousel_page = Column(Integer)  # 当前轮播页
-    first_page_duration = Column(Integer)  # 第一页停留时间(秒)
-    second_page_duration = Column(Integer)  # 第二页停留时间(秒)
-    third_page_duration = Column(Integer)  # 第三页停留时间(秒)
-    visitor_count = Column(Integer)  # 来访人数统计 
+    name = Column(String(100), nullable=False, comment="网页名称")
+    icon_url = Column(String(255), nullable=True, comment="图标URL")
+    video_carousel = Column(Boolean, default=False, comment="视频是否轮播")
+    page_carousel = Column(Boolean, default=False, comment="网页是否轮播")
+    current_carousel_page = Column(Integer, nullable=True, comment="当前轮播页")
+    first_page_duration = Column(Integer, nullable=True, comment="第一页停留时间(秒)")
+    second_page_duration = Column(Integer, nullable=True, comment="第二页停留时间(秒)")
+    third_page_duration = Column(Integer, nullable=True, comment="第三页停留时间(秒)")
+    visitor_count = Column(Integer, nullable=True, comment="来访人数统计")
+    weekly_visitor_count = Column(Integer, nullable=True, comment="本周访客数")
+    monthly_visitor_count = Column(Integer, nullable=True, comment="本月访客数")
+    video_carousel_duration = Column(Integer, nullable=True, comment="视频轮播停留时间(秒)") 

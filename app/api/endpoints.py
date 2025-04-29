@@ -390,16 +390,36 @@ def delete_training_field(field_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Training field deleted successfully"}
 
-@router.get("/awards", response_model=List[schemas.Award])
-def get_awards(db: Session = Depends(get_db)):
+@router.get("/awards", response_model=schemas.PaginatedResponse[schemas.Award])
+def get_awards(
+    page: int = 1,
+    page_size: int = 10,
+    db: Session = Depends(get_db)
+):
     """获取所有荣誉证书列表"""
     try:
-        logger.info("Fetching all awards")
-        awards = db.query(models.Award).all()
-        logger.info(f"Found {len(awards)} awards")
-        return awards
+        logger.info(f"获取荣誉列表: page={page}, page_size={page_size}")
+        
+        # 计算总数
+        total = db.query(models.Award).count()
+        
+        # 计算总页数
+        total_pages = (total + page_size - 1) // page_size
+        
+        # 获取分页数据
+        awards = db.query(models.Award).offset((page - 1) * page_size).limit(page_size).all()
+        
+        logger.info(f"找到 {len(awards)} 个荣誉")
+        
+        return schemas.PaginatedResponse(
+            items=awards,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
     except Exception as e:
-        logger.error(f"Error fetching awards: {str(e)}")
+        logger.error(f"获取荣誉列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/awards/{award_id}", response_model=schemas.Award)
@@ -448,21 +468,44 @@ def delete_award(award_id: int, db: Session = Depends(get_db)):
 def get_companies(
     page: int = 1,
     page_size: int = 10,
+    name: Optional[str] = None,
+    is_carousel: Optional[bool] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """获取所有公司列表"""
     try:
-        logger.info(f"获取公司列表: page={page}, page_size={page_size}")
+        logger.info(f"获取公司列表: page={page}, page_size={page_size}, name={name}, is_carousel={is_carousel}")
+        
+        # 构建基础查询
+        query = db.query(models.Company).options(
+            joinedload(models.Company.awards)
+        )
+        
+        # 添加筛选条件
+        if name:
+            query = query.filter(models.Company.name.ilike(f"%{name}%"))
+        
+        if is_carousel is not None:
+            query = query.filter(models.Company.is_carousel == is_carousel)
+        
+        if start_time:
+            query = query.filter(models.Company.create_time >= start_time)
+        
+        if end_time:
+            query = query.filter(models.Company.create_time <= end_time)
         
         # 计算总数
-        total = db.query(models.Company).count()
+        total = query.count()
         
         # 计算总页数
         total_pages = (total + page_size - 1) // page_size
         
         # 获取分页数据
-        companies = db.query(models.Company).options(
-            joinedload(models.Company.awards)
+        companies = query.order_by(
+            models.Company.is_carousel.desc(),
+            models.Company.create_time.desc()
         ).offset((page - 1) * page_size).limit(page_size).all()
         
         logger.info(f"找到 {len(companies)} 个公司")
@@ -501,7 +544,10 @@ def create_company(company: schemas.CompanyCreate, db: Session = Depends(get_db)
     """创建新公司"""
     try:
         logger.info("创建新公司")
-        db_company = models.Company(**{k: v for k, v in company.model_dump().items() if k != 'award_ids'})
+        company_data = company.model_dump()
+        # 设置创建时间为当前时间戳字符串
+        company_data['create_time'] = str(int(datetime.now().timestamp()))
+        db_company = models.Company(**{k: v for k, v in company_data.items() if k != 'award_ids'})
         
         # 如果提供了荣誉ID列表，验证并添加荣誉
         if company.award_ids:
@@ -535,7 +581,10 @@ def update_company(company_id: int, company: schemas.CompanyCreate, db: Session 
             raise HTTPException(status_code=404, detail="Company not found")
         
         # 更新基本信息
-        for key, value in company.model_dump(exclude={'award_ids'}).items():
+        company_data = company.model_dump(exclude={'award_ids'})
+        # 更新创建时间为当前时间戳字符串
+        company_data['create_time'] = str(int(datetime.now().timestamp()))
+        for key, value in company_data.items():
             setattr(db_company, key, value)
         
         # 更新荣誉关联
@@ -569,10 +618,48 @@ def delete_company(company_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Company deleted successfully"}
 
-@router.get("/videos", response_model=List[schemas.Video])
-def get_videos(db: Session = Depends(get_db)):
+@router.get("/videos", response_model=schemas.PaginatedResponse[schemas.Video])
+def get_videos(
+    page: int = 1,
+    page_size: int = 10,
+    name: Optional[str] = None,
+    video_type: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
     """获取所有视频列表"""
-    return db.query(models.Video).all()
+    try:
+        logger.info(f"获取视频列表: page={page}, page_size={page_size}, name={name}, video_type={video_type}")
+        
+        # 构建查询
+        query = db.query(models.Video)
+        
+        # 添加筛选条件
+        if name:
+            query = query.filter(models.Video.name.like(f"%{name}%"))
+        if video_type:
+            query = query.filter(models.Video.type == video_type)
+        
+        # 计算总数
+        total = query.count()
+        
+        # 计算总页数
+        total_pages = (total + page_size - 1) // page_size
+        
+        # 获取分页数据
+        videos = query.offset((page - 1) * page_size).limit(page_size).all()
+        
+        logger.info(f"找到 {len(videos)} 个视频")
+        
+        return schemas.PaginatedResponse(
+            items=videos,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+    except Exception as e:
+        logger.error(f"获取视频列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/videos/{video_id}", response_model=schemas.Video)
 def get_video(video_id: int, db: Session = Depends(get_db)):
@@ -585,25 +672,45 @@ def get_video(video_id: int, db: Session = Depends(get_db)):
 @router.post("/videos", response_model=schemas.Video)
 def create_video(video: schemas.VideoCreate, db: Session = Depends(get_db)):
     """创建新视频"""
-    db_video = models.Video(**video.model_dump())
-    db.add(db_video)
-    db.commit()
-    db.refresh(db_video)
-    return db_video
+    try:
+        logger.info("创建新视频")
+        video_data = video.model_dump()
+        # 设置创建时间为当前时间戳字符串
+        video_data['create_time'] = str(int(datetime.now().timestamp()))
+        db_video = models.Video(**video_data)
+        db.add(db_video)
+        db.commit()
+        db.refresh(db_video)
+        logger.info(f"视频创建成功: ID={db_video.id}")
+        return db_video
+    except Exception as e:
+        logger.error(f"创建视频失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/videos/{video_id}", response_model=schemas.Video)
 def update_video(video_id: int, video: schemas.VideoCreate, db: Session = Depends(get_db)):
     """更新视频信息"""
-    db_video = db.query(models.Video).filter(models.Video.id == video_id).first()
-    if not db_video:
-        raise HTTPException(status_code=404, detail="Video not found")
-    
-    for key, value in video.model_dump().items():
-        setattr(db_video, key, value)
-    
-    db.commit()
-    db.refresh(db_video)
-    return db_video
+    try:
+        logger.info(f"更新视频: ID={video_id}")
+        db_video = db.query(models.Video).filter(models.Video.id == video_id).first()
+        if not db_video:
+            logger.warning(f"未找到视频: ID={video_id}")
+            raise HTTPException(status_code=404, detail="Video not found")
+        
+        # 更新基本信息
+        video_data = video.model_dump()
+        # 更新创建时间为当前时间戳字符串
+        video_data['create_time'] = str(int(datetime.now().timestamp()))
+        for key, value in video_data.items():
+            setattr(db_video, key, value)
+        
+        db.commit()
+        db.refresh(db_video)
+        logger.info(f"视频更新成功: ID={video_id}")
+        return db_video
+    except Exception as e:
+        logger.error(f"更新视频失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/videos/{video_id}")
 def delete_video(video_id: int, db: Session = Depends(get_db)):
@@ -616,21 +723,81 @@ def delete_video(video_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Video deleted successfully"}
 
-@router.get("/visitor-records", response_model=List[schemas.VisitorRecord])
+@router.get("/videos/carousel", response_model=schemas.PaginatedResponse[schemas.Video])
+def get_carousel_videos(
+    page: int = 1,
+    page_size: int = 10,
+    db: Session = Depends(get_db)
+):
+    """获取轮播视频列表"""
+    try:
+        logger.info(f"获取轮播视频列表: page={page}, page_size={page_size}")
+        
+        # 计算总数
+        total = db.query(models.Video).filter(models.Video.is_carousel == True).count()
+        
+        # 计算总页数
+        total_pages = (total + page_size - 1) // page_size
+        
+        # 获取分页数据
+        videos = db.query(models.Video).filter(
+            models.Video.is_carousel == True
+        ).offset((page - 1) * page_size).limit(page_size).all()
+        
+        logger.info(f"找到 {len(videos)} 个轮播视频")
+        
+        return schemas.PaginatedResponse(
+            items=videos,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+    except Exception as e:
+        logger.error(f"获取轮播视频列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/visitor-records", response_model=schemas.PaginatedResponse[schemas.VisitorRecord])
 def get_visitor_records(
+    page: int = 1,
+    page_size: int = 10,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """获取参观记录列表"""
-    query = db.query(models.VisitorRecord)
-    
-    if start_date:
-        query = query.filter(models.VisitorRecord.visit_date >= start_date)
-    if end_date:
-        query = query.filter(models.VisitorRecord.visit_date <= end_date)
-    
-    return query.all()
+    try:
+        logger.info(f"获取参观记录列表: page={page}, page_size={page_size}")
+        
+        # 构建查询
+        query = db.query(models.VisitorRecord)
+        
+        if start_date:
+            query = query.filter(models.VisitorRecord.visit_date >= start_date)
+        if end_date:
+            query = query.filter(models.VisitorRecord.visit_date <= end_date)
+        
+        # 计算总数
+        total = query.count()
+        
+        # 计算总页数
+        total_pages = (total + page_size - 1) // page_size
+        
+        # 获取分页数据
+        records = query.offset((page - 1) * page_size).limit(page_size).all()
+        
+        logger.info(f"找到 {len(records)} 条参观记录")
+        
+        return schemas.PaginatedResponse(
+            items=records,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+    except Exception as e:
+        logger.error(f"获取参观记录列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/visitor-records/{record_id}", response_model=schemas.VisitorRecord)
 def get_visitor_record(record_id: int, db: Session = Depends(get_db)):
@@ -674,10 +841,37 @@ def delete_visitor_record(record_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Visitor record deleted successfully"}
 
-@router.get("/data-types", response_model=List[schemas.DataType])
-def get_data_types(db: Session = Depends(get_db)):
+@router.get("/data-types", response_model=schemas.PaginatedResponse[schemas.DataType])
+def get_data_types(
+    page: int = 1,
+    page_size: int = 10,
+    db: Session = Depends(get_db)
+):
     """获取所有数据类型列表"""
-    return db.query(models.DataType).all()
+    try:
+        logger.info(f"获取数据类型列表: page={page}, page_size={page_size}")
+        
+        # 计算总数
+        total = db.query(models.DataType).count()
+        
+        # 计算总页数
+        total_pages = (total + page_size - 1) // page_size
+        
+        # 获取分页数据
+        types = db.query(models.DataType).offset((page - 1) * page_size).limit(page_size).all()
+        
+        logger.info(f"找到 {len(types)} 个数据类型")
+        
+        return schemas.PaginatedResponse(
+            items=types,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+    except Exception as e:
+        logger.error(f"获取数据类型列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/data-types/{type_id}", response_model=schemas.DataType)
 def get_data_type(type_id: int, db: Session = Depends(get_db)):
@@ -883,10 +1077,37 @@ def delete_data_record(record_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Data record deleted successfully"}
 
-@router.get("/web-configs", response_model=List[schemas.WebConfig])
-def get_web_configs(db: Session = Depends(get_db)):
+@router.get("/web-configs", response_model=schemas.PaginatedResponse[schemas.WebConfig])
+def get_web_configs(
+    page: int = 1,
+    page_size: int = 10,
+    db: Session = Depends(get_db)
+):
     """获取所有网页配置信息"""
-    return db.query(models.WebConfig).all()
+    try:
+        logger.info(f"获取网页配置列表: page={page}, page_size={page_size}")
+        
+        # 计算总数
+        total = db.query(models.WebConfig).count()
+        
+        # 计算总页数
+        total_pages = (total + page_size - 1) // page_size
+        
+        # 获取分页数据
+        configs = db.query(models.WebConfig).offset((page - 1) * page_size).limit(page_size).all()
+        
+        logger.info(f"找到 {len(configs)} 个网页配置")
+        
+        return schemas.PaginatedResponse(
+            items=configs,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+    except Exception as e:
+        logger.error(f"获取网页配置列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/web-configs/{config_id}", response_model=schemas.WebConfig)
 def get_web_config(config_id: int, db: Session = Depends(get_db)):
