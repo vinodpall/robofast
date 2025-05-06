@@ -41,12 +41,6 @@ class Robot(Base):
     training_field = relationship("TrainingField", back_populates="robots")
     data_records = relationship("DataRecord", back_populates="robot", lazy="selectin")
 
-# 添加事件监听器
-@event.listens_for(Robot, 'before_update')
-def set_carousel_add_time(mapper, connection, target):
-    if target.is_carousel and not target.carousel_add_time:
-        target.carousel_add_time = str(int(datetime.now().timestamp()))
-
 class TrainingField(Base):
     """训练场表"""
     __tablename__ = "training_fields"
@@ -144,4 +138,15 @@ class WebConfig(Base):
     visitor_count = Column(Integer, nullable=True, comment="来访人数统计")
     weekly_visitor_count = Column(Integer, nullable=True, comment="本周访客数")
     monthly_visitor_count = Column(Integer, nullable=True, comment="本月访客数")
-    video_carousel_duration = Column(Integer, nullable=True, comment="视频轮播停留时间(秒)") 
+    video_carousel_duration = Column(Integer, nullable=True, comment="视频轮播停留时间(秒)")
+
+# 事件监听器
+@event.listens_for(Robot, 'before_update')
+def set_carousel_add_time(mapper, connection, target):
+    if target.is_carousel:
+        target.carousel_add_time = str(int(datetime.now().timestamp()))
+
+@event.listens_for(Video, 'before_update')
+def set_video_carousel_add_time(mapper, connection, target):
+    if target.is_carousel:
+        target.carousel_add_time = str(int(datetime.now().timestamp())) 
