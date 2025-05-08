@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session, joinedload
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from app.database.database import get_db
 from app.models import models
 from app.schemas import schemas
@@ -28,63 +28,63 @@ def error_response(status_code: int, detail: str, error_type: str = "error"):
         })
     )
 
-@router.get("/dashboard/stats", response_model=schemas.DashboardStats)
-def get_dashboard_stats(db: Session = Depends(get_db)):
-    # Get robot type distribution
-    robot_types = db.query(
-        models.Robot.industry_type,
-        func.count(models.Robot.id)
-    ).group_by(models.Robot.industry_type).all()
-    
-    robot_types_dict = {type_: count for type_, count in robot_types}
-
-    # Get training field statistics
-    training_fields = db.query(models.TrainingField).all()
-    training_field_stats = []
-    for field in training_fields:
-        robot_count = db.query(func.count(models.Robot.id)).filter(
-            models.Robot.training_field_id == field.id
-        ).scalar()
+@router.get("/robots/status-stats", response_model=Dict[str, int])
+def get_robot_status_stats(db: Session = Depends(get_db)):
+    """统计机器人的在线、离线、故障状态数量，以及总数"""
+    try:
+        logger.info("开始统计机器人状态分布")
         
-        training_field_stats.append({
-            "name": field.name,
-            "robot_count": robot_count
-        })
+        # 查询各状态的数量
+        status_counts = db.query(
+            models.Robot.status,
+            func.count(models.Robot.id)
+        ).group_by(models.Robot.status).all()
+        
+        # 创建状态计数字典
+        status_dict = {status: count for status, count in status_counts}
+        
+        # 计算总数
+        total = sum(status_dict.values())
+        
+        # 组装结果
+        results = {
+            "online": status_dict.get("在线", 0),
+            "offline": status_dict.get("离线", 0),
+            "fault": status_dict.get("故障", 0),
+            "total": total
+        }
+        
+        logger.info(f"状态统计完成: {results}")
+        return results
+        
+    except Exception as e:
+        logger.error(f"统计机器人状态分布失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # Get robot status statistics
-    status_stats = db.query(
-        models.Robot.status,
-        func.count(models.Robot.id)
-    ).group_by(models.Robot.status).all()
-    
-    robot_status = {status: count for status, count in status_stats}
-
-    # Get robot skills distribution
-    robot_skills = db.query(
-        models.Robot.skills,
-        func.count(models.Robot.id)
-    ).group_by(models.Robot.skills).all()
-    
-    skills_dict = {skill: count for skill, count in robot_skills if skill}
-
-    # Get visitor trend
-    visitor_records = db.query(
-        models.VisitorRecord.visit_date,
-        models.VisitorRecord.visitor_count
-    ).order_by(models.VisitorRecord.visit_date).all()
-
-    participation_trend = [
-        {"date": record[0], "count": record[1]}
-        for record in visitor_records
-    ]
-
-    return schemas.DashboardStats(
-        robot_types=robot_types_dict,
-        training_field_stats=training_field_stats,
-        robot_status=robot_status,
-        robot_skills=skills_dict,
-        participation_trend=participation_trend
-    )
+@router.get("/robots/skill-stats", response_model=List[Dict[str, Any]])
+def get_robot_skill_stats(db: Session = Depends(get_db)):
+    """统计机器人不同skill的数量，固定四种：操作性能、移动性能、交互性能、其他"""
+    try:
+        logger.info("开始统计机器人技能分布")
+        fixed_skills = ["操作性能", "移动性能", "交互性能", "其他"]
+        # 查询数据库中各技能的数量
+        skill_counts = db.query(
+            models.Robot.skills,
+            func.count(models.Robot.id)
+        ).group_by(models.Robot.skills).all()
+        skill_count_dict = {skill: count for skill, count in skill_counts if skill}
+        # 组装结果，保证四种技能都出现
+        results = []
+        for skill in fixed_skills:
+            results.append({
+                "skill": skill,
+                "count": skill_count_dict.get(skill, 0)
+            })
+        logger.info(f"技能统计完成: {results}")
+        return results
+    except Exception as e:
+        logger.error(f"统计机器人技能分布失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/robots", response_model=schemas.PaginatedResponse[schemas.Robot])
 def get_robots(
@@ -180,6 +180,64 @@ def get_robot(robot_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"获取机器人详情失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/dashboard/stats", response_model=schemas.DashboardStats)
+def get_dashboard_stats(db: Session = Depends(get_db)):
+    # Get robot type distribution
+    robot_types = db.query(
+        models.Robot.industry_type,
+        func.count(models.Robot.id)
+    ).group_by(models.Robot.industry_type).all()
+    
+    robot_types_dict = {type_: count for type_, count in robot_types}
+
+    # Get training field statistics
+    training_fields = db.query(models.TrainingField).all()
+    training_field_stats = []
+    for field in training_fields:
+        robot_count = db.query(func.count(models.Robot.id)).filter(
+            models.Robot.training_field_id == field.id
+        ).scalar()
+        
+        training_field_stats.append({
+            "name": field.name,
+            "robot_count": robot_count
+        })
+
+    # Get robot status statistics
+    status_stats = db.query(
+        models.Robot.status,
+        func.count(models.Robot.id)
+    ).group_by(models.Robot.status).all()
+    
+    robot_status = {status: count for status, count in status_stats}
+
+    # Get robot skills distribution
+    robot_skills = db.query(
+        models.Robot.skills,
+        func.count(models.Robot.id)
+    ).group_by(models.Robot.skills).all()
+    
+    skills_dict = {skill: count for skill, count in robot_skills if skill}
+
+    # Get visitor trend
+    visitor_records = db.query(
+        models.VisitorRecord.visit_date,
+        models.VisitorRecord.visitor_count
+    ).order_by(models.VisitorRecord.visit_date).all()
+
+    participation_trend = [
+        {"date": record[0], "count": record[1]}
+        for record in visitor_records
+    ]
+
+    return schemas.DashboardStats(
+        robot_types=robot_types_dict,
+        training_field_stats=training_field_stats,
+        robot_status=robot_status,
+        robot_skills=skills_dict,
+        participation_trend=participation_trend
+    )
 
 @router.post("/robots", response_model=schemas.Robot)
 def create_robot(robot: schemas.RobotCreate, db: Session = Depends(get_db)):
@@ -302,6 +360,40 @@ def delete_robot(robot_id: int, db: Session = Depends(get_db)):
         raise he
     except Exception as e:
         logger.error(f"删除机器人失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/training-fields/robot-stats", response_model=List[Dict[str, Any]])
+def get_training_fields_robot_stats(db: Session = Depends(get_db)):
+    """获取所有训练场的机器人数量统计"""
+    try:
+        logger.info("开始统计训练场机器人数量")
+        
+        # 获取所有训练场
+        training_fields = db.query(models.TrainingField).all()
+        
+        # 获取每个训练场的机器人数量
+        field_robot_counts = db.query(
+            models.Robot.training_field_id,
+            func.count(models.Robot.id)
+        ).group_by(models.Robot.training_field_id).all()
+        
+        # 创建训练场机器人数量的字典，方便查找
+        robot_counts_dict = {field_id: count for field_id, count in field_robot_counts}
+        
+        # 生成结果
+        results = []
+        for field in training_fields:
+            results.append({
+                "field_id": field.id,
+                "field_name": field.name,
+                "robot_count": robot_counts_dict.get(field.id, 0)  # 如果没有机器人，则为0
+            })
+        
+        logger.info(f"统计完成，共找到 {len(results)} 个训练场")
+        return results
+        
+    except Exception as e:
+        logger.error(f"统计训练场机器人数量失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/training-fields", response_model=schemas.PaginatedResponse[schemas.TrainingField])
@@ -757,6 +849,77 @@ def get_carousel_videos(
         logger.error(f"获取轮播视频列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/visitor-records/stats", response_model=Dict[str, Any])
+def get_visitor_stats(db: Session = Depends(get_db)):
+    """统计访客数量，包括每日、本周和本月的统计"""
+    try:
+        logger.info("开始统计访客数量")
+        
+        # 获取当前时间戳
+        now = datetime.now()
+        current_timestamp = int(now.timestamp())
+        
+        # 计算30天前的时间戳
+        thirty_days_ago = int((now - timedelta(days=30)).timestamp())
+        
+        # 计算本周开始的时间戳（周一）
+        week_start = now - timedelta(days=now.weekday())
+        week_start_timestamp = int(week_start.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+        
+        # 计算本月开始的时间戳
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month_start_timestamp = int(month_start.timestamp())
+        
+        # 查询最近30天的访客记录
+        visitor_records = db.query(
+            models.VisitorRecord.visit_date,
+            models.VisitorRecord.visitor_count
+        ).filter(
+            models.VisitorRecord.visit_date >= str(thirty_days_ago)
+        ).order_by(models.VisitorRecord.visit_date).all()
+        
+        # 计算本周访客数量
+        week_visitors = db.query(
+            func.sum(models.VisitorRecord.visitor_count)
+        ).filter(
+            models.VisitorRecord.visit_date >= str(week_start_timestamp)
+        ).scalar() or 0
+        
+        # 计算本月访客数量
+        month_visitors = db.query(
+            func.sum(models.VisitorRecord.visitor_count)
+        ).filter(
+            models.VisitorRecord.visit_date >= str(month_start_timestamp)
+        ).scalar() or 0
+        
+        # 组装每日访客数据
+        daily_stats = []
+        for timestamp, count in visitor_records:
+            # 将时间戳转换为日期字符串
+            date = datetime.fromtimestamp(int(timestamp)).strftime("%Y-%m-%d")
+            daily_stats.append({
+                "date": date,
+                "count": count
+            })
+        
+        # 添加日志输出，帮助调试
+        logger.info(f"查询到的访客记录: {visitor_records}")
+        logger.info(f"本周访客数量: {week_visitors}")
+        logger.info(f"本月访客数量: {month_visitors}")
+        
+        results = {
+            "daily_stats": daily_stats,
+            "week_total": int(week_visitors),
+            "month_total": int(month_visitors)
+        }
+        
+        logger.info(f"访客统计完成: {results}")
+        return results
+        
+    except Exception as e:
+        logger.error(f"统计访客数量失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/visitor-records", response_model=schemas.PaginatedResponse[schemas.VisitorRecord])
 def get_visitor_records(
     page: int = 1,
@@ -939,6 +1102,64 @@ def delete_data_type(type_id: int, db: Session = Depends(get_db)):
     db.delete(db_data_type)
     db.commit()
     return {"message": "Data type deleted successfully"}
+
+@router.get("/data-records/type-stats", response_model=Dict[str, Any])
+def get_data_records_type_stats(db: Session = Depends(get_db)):
+    """统计不同类型的数据采集记录数量（count字段总和）"""
+    try:
+        logger.info("开始统计数据采集记录类型分布")
+        
+        # 获取所有数据类型
+        data_types = db.query(models.DataType).all()
+        
+        # 获取今天的日期
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        # 查询各类型的数据记录count总和
+        type_counts = db.query(
+            models.DataRecord.data_type_id,
+            func.sum(models.DataRecord.count)  # 使用sum而不是count
+        ).group_by(models.DataRecord.data_type_id).all()
+        
+        # 查询今日各类型的数据记录count总和
+        today_type_counts = db.query(
+            models.DataRecord.data_type_id,
+            func.sum(models.DataRecord.count)
+        ).filter(
+            models.DataRecord.collect_date.like(f"{today}%")
+        ).group_by(models.DataRecord.data_type_id).all()
+        
+        # 创建类型计数字典
+        type_count_dict = {type_id: count for type_id, count in type_counts if count is not None}
+        today_type_count_dict = {type_id: count for type_id, count in today_type_counts if count is not None}
+        
+        # 计算总采集数量
+        total_count = sum(type_count_dict.values())
+        # 计算今日采集数量
+        today_total_count = sum(today_type_count_dict.values())
+        
+        # 组装结果
+        type_stats = []
+        for data_type in data_types:
+            type_stats.append({
+                "type_id": data_type.id,
+                "type_name": data_type.name,
+                "count": int(type_count_dict.get(data_type.id, 0)),  # 如果没有记录，则为0
+                "today_count": int(today_type_count_dict.get(data_type.id, 0))  # 今日采集数量
+            })
+        
+        results = {
+            "type_stats": type_stats,
+            "total_count": total_count,
+            "today_count": today_total_count
+        }
+        
+        logger.info(f"数据采集记录类型统计完成: {results}")
+        return results
+        
+    except Exception as e:
+        logger.error(f"统计数据采集记录类型分布失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/data-records", response_model=schemas.PaginatedResponse[schemas.DataRecord])
 def get_data_records(
@@ -1169,4 +1390,66 @@ async def upload_image(file: UploadFile = File(...)):
     # 保存文件
     file_url = await save_upload_file(file)
     
-    return {"url": file_url} 
+    return {"url": file_url}
+
+@router.get("/robot-types/analysis", response_model=Dict[str, List[schemas.RobotTypeAnalysis]])
+def analyze_robot_types(db: Session = Depends(get_db)):
+    """分析机器人种类分布"""
+    try:
+        logger.info("开始分析机器人种类分布")
+        
+        # 获取当前月份
+        current_month = datetime.now().strftime("%Y%m")
+        
+        # 获取所有机器人种类及其数量
+        robot_types = db.query(
+            models.Robot.industry_type,
+            func.count(models.Robot.id)
+        ).group_by(models.Robot.industry_type).all()
+        
+        # 获取当月受训机器人种类及其数量
+        training_robot_types = db.query(
+            models.Robot.industry_type,
+            func.count(models.Robot.id)
+        ).filter(
+            models.Robot.create_date.like(f"{current_month}%")
+        ).group_by(models.Robot.industry_type).all()
+        
+        # 计算总数
+        total_robots = sum(count for _, count in robot_types)
+        total_training_robots = sum(count for _, count in training_robot_types)
+        
+        # 创建当月受训机器人类型的字典，方便查找
+        training_types_dict = {type_: count for type_, count in training_robot_types}
+        
+        # 计算每种类型的百分比（全部机器人）
+        all_analysis_results = []
+        for type_, count in robot_types:
+            percentage = int((count / total_robots * 100)) if total_robots > 0 else 0
+            all_analysis_results.append(schemas.RobotTypeAnalysis(
+                type=type_,
+                count=count,
+                percentage=percentage
+            ))
+        
+        # 计算每种类型的百分比（当月受训机器人）
+        training_analysis_results = []
+        for type_, count in robot_types:  # 使用所有类型
+            training_count = training_types_dict.get(type_, 0)  # 如果没有当月数据，则为0
+            percentage = int((training_count / total_training_robots * 100)) if total_training_robots > 0 else 0
+            training_analysis_results.append(schemas.RobotTypeAnalysis(
+                type=type_,
+                count=training_count,
+                percentage=percentage
+            ))
+        
+        logger.info(f"分析完成，共找到 {len(all_analysis_results)} 种机器人类型")
+        
+        return {
+            "all_robots": all_analysis_results,
+            "training_robots": training_analysis_results
+        }
+        
+    except Exception as e:
+        logger.error(f"分析机器人种类分布失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e)) 

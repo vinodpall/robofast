@@ -309,6 +309,15 @@ class FileResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class RobotTypeAnalysis(BaseModel):
+    """机器人种类分析结果"""
+    type: str = Field(..., description="机器人种类")
+    count: int = Field(..., description="数量")
+    percentage: float = Field(..., description="百分比")
+
+    class Config:
+        from_attributes = True
+
 # 6. 更新前向引用
 Robot.model_rebuild()
 DataRecord.model_rebuild() 
