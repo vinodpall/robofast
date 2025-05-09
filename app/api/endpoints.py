@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional, Dict, Any
 from app.database.database import get_db
@@ -8,8 +8,11 @@ from sqlalchemy import func, or_
 from datetime import datetime, timedelta
 import logging
 from app.utils.file_handler import save_upload_file
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.encoders import jsonable_encoder
+import random
+import os
+import mimetypes
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
@@ -28,29 +31,63 @@ def error_response(status_code: int, detail: str, error_type: str = "error"):
         })
     )
 
+@router.get("/robots/carousel", response_model=List[schemas.Robot])
+def get_carousel_robots(db: Session = Depends(get_db)):
+    """获取所有轮播机器人列表"""
+    try:
+        logger.info("获取轮播机器人列表")
+        
+        # 查询所有is_carousel为true的机器人
+        robots = db.query(models.Robot).options(
+            joinedload(models.Robot.company),
+            joinedload(models.Robot.training_field),
+            joinedload(models.Robot.data_records)
+        ).filter(
+            models.Robot.is_carousel == True
+        ).order_by(
+            models.Robot.carousel_add_time.desc()  # 按轮播添加时间倒序排序
+        ).all()
+        
+        logger.info(f"找到 {len(robots)} 个轮播机器人")
+        return robots
+        
+    except Exception as e:
+        logger.error(f"获取轮播机器人列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/robots/status-stats", response_model=Dict[str, int])
-def get_robot_status_stats(db: Session = Depends(get_db)):
+def get_robot_status_stats(
+    robot_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
     """统计机器人的在线、离线、故障状态数量，以及总数"""
     try:
         logger.info("开始统计机器人状态分布")
         
-        # 查询各状态的数量
-        status_counts = db.query(
+        # 构建基础查询
+        query = db.query(
             models.Robot.status,
             func.count(models.Robot.id)
-        ).group_by(models.Robot.status).all()
+        )
         
-        # 创建状态计数字典
-        status_dict = {status: count for status, count in status_counts}
+        # 如果提供了robot_id，则只统计该机器人
+        if robot_id:
+            query = query.filter(models.Robot.id == robot_id)
+            
+        # 执行查询并按状态分组
+        status_counts = query.group_by(models.Robot.status).all()
+        
+        # 创建状态计数字典，处理可能的空值
+        status_dict = {status: count for status, count in status_counts if status}
         
         # 计算总数
         total = sum(status_dict.values())
         
-        # 组装结果
+        # 组装结果，使用更灵活的状态映射
         results = {
-            "online": status_dict.get("在线", 0),
-            "offline": status_dict.get("离线", 0),
-            "fault": status_dict.get("故障", 0),
+            "online": sum(count for status, count in status_counts if status and "在线" in status),
+            "offline": sum(count for status, count in status_counts if status and "离线" in status),
+            "fault": sum(count for status, count in status_counts if status and "故障" in status),
             "total": total
         }
         
@@ -62,28 +99,65 @@ def get_robot_status_stats(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/robots/skill-stats", response_model=List[Dict[str, Any]])
-def get_robot_skill_stats(db: Session = Depends(get_db)):
+def get_robot_skill_stats(
+    robot_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
     """统计机器人不同skill的数量，固定四种：操作性能、移动性能、交互性能、其他"""
     try:
         logger.info("开始统计机器人技能分布")
         fixed_skills = ["操作性能", "移动性能", "交互性能", "其他"]
-        # 查询数据库中各技能的数量
-        skill_counts = db.query(
+        
+        # 构建基础查询
+        query = db.query(
             models.Robot.skills,
             func.count(models.Robot.id)
-        ).group_by(models.Robot.skills).all()
+        )
+        
+        # 如果提供了robot_id，则只统计该机器人
+        if robot_id:
+            query = query.filter(models.Robot.id == robot_id)
+            
+        # 执行查询并按技能分组
+        skill_counts = query.group_by(models.Robot.skills).all()
+        
+        # 创建技能计数字典，处理可能的空值
         skill_count_dict = {skill: count for skill, count in skill_counts if skill}
+        
         # 组装结果，保证四种技能都出现
         results = []
         for skill in fixed_skills:
+            # 查找包含该技能关键词的记录
+            count = sum(count for s, count in skill_counts if s and skill in s)
             results.append({
                 "skill": skill,
-                "count": skill_count_dict.get(skill, 0)
+                "count": count
             })
+            
         logger.info(f"技能统计完成: {results}")
         return results
     except Exception as e:
         logger.error(f"统计机器人技能分布失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/robots/{robot_id}", response_model=schemas.Robot)
+def get_robot(robot_id: int, db: Session = Depends(get_db)):
+    """获取单个机器人详情"""
+    try:
+        logger.info(f"获取机器人详情: ID={robot_id}")
+        robot = db.query(models.Robot).options(
+            joinedload(models.Robot.company),
+            joinedload(models.Robot.training_field),
+            joinedload(models.Robot.data_records)
+        ).filter(models.Robot.id == robot_id).first()
+        if not robot:
+            logger.warning(f"未找到机器人: ID={robot_id}")
+            raise HTTPException(status_code=404, detail="Robot not found")
+        return robot
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"获取机器人详情失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/robots", response_model=schemas.PaginatedResponse[schemas.Robot])
@@ -159,26 +233,6 @@ def get_robots(
         raise he
     except Exception as e:
         logger.error(f"获取机器人列表失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/robots/{robot_id}", response_model=schemas.Robot)
-def get_robot(robot_id: int, db: Session = Depends(get_db)):
-    """获取单个机器人详情"""
-    try:
-        logger.info(f"获取机器人详情: ID={robot_id}")
-        robot = db.query(models.Robot).options(
-            joinedload(models.Robot.company),
-            joinedload(models.Robot.training_field),
-            joinedload(models.Robot.data_records)
-        ).filter(models.Robot.id == robot_id).first()
-        if not robot:
-            logger.warning(f"未找到机器人: ID={robot_id}")
-            raise HTTPException(status_code=404, detail="Robot not found")
-        return robot
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        logger.error(f"获取机器人详情失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/dashboard/stats", response_model=schemas.DashboardStats)
@@ -710,111 +764,6 @@ def delete_company(company_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Company deleted successfully"}
 
-@router.get("/videos", response_model=schemas.PaginatedResponse[schemas.Video])
-def get_videos(
-    page: int = 1,
-    page_size: int = 10,
-    name: Optional[str] = None,
-    video_type: Optional[str] = None,
-    db: Session = Depends(get_db)
-):
-    """获取所有视频列表"""
-    try:
-        logger.info(f"获取视频列表: page={page}, page_size={page_size}, name={name}, video_type={video_type}")
-        
-        # 构建查询
-        query = db.query(models.Video)
-        
-        # 添加筛选条件
-        if name:
-            query = query.filter(models.Video.name.like(f"%{name}%"))
-        if video_type:
-            query = query.filter(models.Video.type == video_type)
-        
-        # 计算总数
-        total = query.count()
-        
-        # 计算总页数
-        total_pages = (total + page_size - 1) // page_size
-        
-        # 获取分页数据
-        videos = query.offset((page - 1) * page_size).limit(page_size).all()
-        
-        logger.info(f"找到 {len(videos)} 个视频")
-        
-        return schemas.PaginatedResponse(
-            items=videos,
-            total=total,
-            page=page,
-            page_size=page_size,
-            total_pages=total_pages
-        )
-    except Exception as e:
-        logger.error(f"获取视频列表失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/videos/{video_id}", response_model=schemas.Video)
-def get_video(video_id: int, db: Session = Depends(get_db)):
-    """获取单个视频详情"""
-    video = db.query(models.Video).filter(models.Video.id == video_id).first()
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
-    return video
-
-@router.post("/videos", response_model=schemas.Video)
-def create_video(video: schemas.VideoCreate, db: Session = Depends(get_db)):
-    """创建新视频"""
-    try:
-        logger.info("创建新视频")
-        video_data = video.model_dump()
-        # 设置创建时间为当前时间戳字符串
-        video_data['create_time'] = str(int(datetime.now().timestamp()))
-        db_video = models.Video(**video_data)
-        db.add(db_video)
-        db.commit()
-        db.refresh(db_video)
-        logger.info(f"视频创建成功: ID={db_video.id}")
-        return db_video
-    except Exception as e:
-        logger.error(f"创建视频失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.put("/videos/{video_id}", response_model=schemas.Video)
-def update_video(video_id: int, video: schemas.VideoCreate, db: Session = Depends(get_db)):
-    """更新视频信息"""
-    try:
-        logger.info(f"更新视频: ID={video_id}")
-        db_video = db.query(models.Video).filter(models.Video.id == video_id).first()
-        if not db_video:
-            logger.warning(f"未找到视频: ID={video_id}")
-            raise HTTPException(status_code=404, detail="Video not found")
-        
-        # 更新基本信息
-        video_data = video.model_dump()
-        # 更新创建时间为当前时间戳字符串
-        video_data['create_time'] = str(int(datetime.now().timestamp()))
-        for key, value in video_data.items():
-            setattr(db_video, key, value)
-        
-        db.commit()
-        db.refresh(db_video)
-        logger.info(f"视频更新成功: ID={video_id}")
-        return db_video
-    except Exception as e:
-        logger.error(f"更新视频失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.delete("/videos/{video_id}")
-def delete_video(video_id: int, db: Session = Depends(get_db)):
-    """删除视频"""
-    db_video = db.query(models.Video).filter(models.Video.id == video_id).first()
-    if not db_video:
-        raise HTTPException(status_code=404, detail="Video not found")
-    
-    db.delete(db_video)
-    db.commit()
-    return {"message": "Video deleted successfully"}
-
 @router.get("/videos/carousel", response_model=schemas.PaginatedResponse[schemas.Video])
 def get_carousel_videos(
     page: int = 1,
@@ -849,18 +798,323 @@ def get_carousel_videos(
         logger.error(f"获取轮播视频列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/videos", response_model=schemas.Video)
+async def create_video(
+    file: Optional[UploadFile] = File(None),
+    name: str = Form(...),
+    type: str = Form(...),
+    description: Optional[str] = Form(None),
+    url: Optional[str] = Form(None),
+    is_carousel: Optional[bool] = Form(False),
+    db: Session = Depends(get_db)
+):
+    """创建新视频（兼容旧的上传路径）"""
+    try:
+        logger.info(f"开始创建视频: name={name}, type={type}")
+        logger.info(f"接收到的参数: file={file}, url={url}, description={description}, is_carousel={is_carousel}")
+        
+        # 验证必填参数
+        if not name:
+            raise HTTPException(status_code=422, detail="视频名称不能为空")
+        if not type:
+            raise HTTPException(status_code=422, detail="视频类型不能为空")
+            
+        # 根据类型验证必要参数
+        if type == 'LOCAL':
+            if not url and not file:
+                raise HTTPException(status_code=422, detail="本地视频必须提供URL或上传文件")
+        else:
+            if not url:
+                raise HTTPException(status_code=422, detail="非本地视频必须提供URL")
+        
+        # 处理文件上传
+        if file:
+            # 验证文件类型
+            if not file.content_type.startswith('video/'):
+                raise HTTPException(status_code=400, detail="只允许上传视频文件")
+                
+            # 验证文件大小（限制为100MB）
+            file_size = 0
+            chunk_size = 1024 * 1024  # 1MB
+            while chunk := await file.read(chunk_size):
+                file_size += len(chunk)
+                if file_size > 100 * 1024 * 1024:  # 100MB
+                    raise HTTPException(status_code=400, detail="视频文件大小不能超过100MB")
+            
+            # 重置文件指针
+            await file.seek(0)
+            
+            # 生成文件名
+            timestamp = int(datetime.now().timestamp())
+            file_extension = file.filename.split('.')[-1]
+            new_filename = f"{timestamp}_{name}.{file_extension}"
+            
+            # 确保上传目录存在
+            upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "static", "uploads", "videos")
+            os.makedirs(upload_dir, exist_ok=True)
+            
+            # 保存文件
+            file_path = os.path.join(upload_dir, new_filename)
+            with open(file_path, "wb") as buffer:
+                content = await file.read()
+                buffer.write(content)
+            
+            url = f"/static/uploads/videos/{new_filename}"
+        
+        # 创建视频记录
+        video_data = {
+            "name": name,
+            "type": type,
+            "description": description,
+            "url": url,
+            "create_time": str(int(datetime.now().timestamp())),
+            "is_carousel": is_carousel
+        }
+        
+        logger.info(f"创建视频记录: {video_data}")
+        
+        db_video = models.Video(**video_data)
+        db.add(db_video)
+        db.commit()
+        db.refresh(db_video)
+        
+        logger.info(f"视频创建成功: ID={db_video.id}")
+        return db_video
+        
+    except HTTPException as he:
+        logger.error(f"创建视频失败 (HTTP异常): {str(he)}")
+        raise he
+    except Exception as e:
+        logger.error(f"创建视频失败 (其他异常): {str(e)}")
+        raise HTTPException(status_code=500, detail=f"创建视频失败: {str(e)}")
+
+@router.post("/videos/upload", response_model=schemas.Video)
+async def upload_video(
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    type: str = Form(...),
+    description: Optional[str] = Form(None),
+    is_carousel: Optional[bool] = Form(False),
+    db: Session = Depends(get_db)
+):
+    """上传视频文件
+    
+    Args:
+        file: 上传的视频文件
+        name: 视频名称
+        type: 视频类型
+        description: 视频描述（可选）
+        is_carousel: 是否轮播（可选）
+        
+    Returns:
+        Video: 创建的视频记录
+    """
+    try:
+        logger.info(f"开始上传视频: {name}")
+        
+        # 验证文件类型
+        if not file.content_type.startswith('video/'):
+            raise HTTPException(status_code=400, detail="只允许上传视频文件")
+            
+        # 验证文件大小（限制为100MB）
+        file_size = 0
+        chunk_size = 1024 * 1024  # 1MB
+        while chunk := await file.read(chunk_size):
+            file_size += len(chunk)
+            if file_size > 100 * 1024 * 1024:  # 100MB
+                raise HTTPException(status_code=400, detail="视频文件大小不能超过100MB")
+        
+        # 重置文件指针
+        await file.seek(0)
+        
+        # 生成文件名
+        timestamp = int(datetime.now().timestamp())
+        file_extension = file.filename.split('.')[-1]
+        new_filename = f"{timestamp}_{name}.{file_extension}"
+        
+        # 确保上传目录存在
+        upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "static", "uploads", "videos")
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        # 保存文件
+        file_path = os.path.join(upload_dir, new_filename)
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        # 创建视频记录
+        video_data = {
+            "name": name,
+            "type": type,
+            "description": description,
+            "url": f"/static/uploads/videos/{new_filename}",
+            "create_time": str(timestamp),
+            "is_carousel": is_carousel
+        }
+        
+        db_video = models.Video(**video_data)
+        db.add(db_video)
+        db.commit()
+        db.refresh(db_video)
+        
+        logger.info(f"视频上传成功: ID={db_video.id}")
+        return db_video
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"视频上传失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"视频上传失败: {str(e)}")
+
+@router.get("/videos/stream/{video_id}")
+async def stream_video(video_id: int, db: Session = Depends(get_db)):
+    """获取视频流
+    
+    Args:
+        video_id: 视频ID
+        
+    Returns:
+        StreamingResponse: 视频流
+    """
+    try:
+        # 获取视频记录
+        video = db.query(models.Video).filter(models.Video.id == video_id).first()
+        if not video:
+            raise HTTPException(status_code=404, detail="视频不存在")
+            
+        # 获取视频文件路径
+        video_path = video.url.lstrip('/')  # 移除开头的斜杠
+        if not os.path.exists(video_path):
+            raise HTTPException(status_code=404, detail="视频文件不存在")
+            
+        # 获取文件类型
+        content_type, _ = mimetypes.guess_type(video_path)
+        if not content_type:
+            content_type = "video/mp4"  # 默认类型
+            
+        # 返回视频流
+        return FileResponse(
+            video_path,
+            media_type=content_type,
+            filename=video.name
+        )
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"获取视频流失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取视频流失败: {str(e)}")
+
+@router.get("/videos/list", response_model=List[schemas.Video])
+def get_videos_list(
+    type: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """获取视频列表
+    
+    Args:
+        type: 视频类型（可选）
+        
+    Returns:
+        List[Video]: 视频列表
+    """
+    try:
+        query = db.query(models.Video)
+        
+        if type:
+            query = query.filter(models.Video.type == type)
+            
+        videos = query.order_by(models.Video.create_time.desc()).all()
+        return videos
+        
+    except Exception as e:
+        logger.error(f"获取视频列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取视频列表失败: {str(e)}")
+
+@router.get("/videos", response_model=schemas.PaginatedResponse[schemas.Video])
+def get_videos(
+    page: int = 1,
+    page_size: int = 10,
+    name: Optional[str] = None,
+    video_type: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """获取所有视频列表"""
+    try:
+        logger.info(f"获取视频列表: page={page}, page_size={page_size}, name={name}, video_type={video_type}")
+        
+        # 构建查询
+        query = db.query(models.Video)
+        
+        # 添加筛选条件
+        if name:
+            query = query.filter(models.Video.name.like(f"%{name}%"))
+        if video_type:
+            query = query.filter(models.Video.type == video_type)
+        
+        # 计算总数
+        total = query.count()
+        
+        # 计算总页数
+        total_pages = (total + page_size - 1) // page_size
+        
+        # 获取分页数据
+        videos = query.order_by(models.Video.create_time.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        
+        logger.info(f"找到 {len(videos)} 个视频")
+        
+        return schemas.PaginatedResponse(
+            items=videos,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+    except Exception as e:
+        logger.error(f"获取视频列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/videos/{video_id}", response_model=schemas.Video)
+def get_video(video_id: int, db: Session = Depends(get_db)):
+    """获取单个视频详情"""
+    video = db.query(models.Video).filter(models.Video.id == video_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return video
+
 @router.get("/visitor-records/stats", response_model=Dict[str, Any])
 def get_visitor_stats(db: Session = Depends(get_db)):
     """统计访客数量，包括每日、本周和本月的统计"""
     try:
         logger.info("开始统计访客数量")
         
-        # 获取当前时间戳
+        # 获取当前时间戳和日期字符串
         now = datetime.now()
         current_timestamp = int(now.timestamp())
+        today_str = now.strftime("%Y-%m-%d")
         
-        # 计算30天前的时间戳
-        thirty_days_ago = int((now - timedelta(days=30)).timestamp())
+        # 检查今天是否有数据（使用时间戳范围比较）
+        today_start = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+        today_end = int(datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999).timestamp())
+        
+        today_record = db.query(models.VisitorRecord).filter(
+            models.VisitorRecord.visit_date.between(str(today_start), str(today_end))
+        ).first()
+        
+        # 如果今天没有数据，则创建一条新记录
+        if not today_record:
+            logger.info("今天还没有访客记录，创建新记录")
+            new_count = random.randint(0, 200)
+            new_record = models.VisitorRecord(
+                visit_date=str(current_timestamp),
+                visitor_count=new_count
+            )
+            db.add(new_record)
+            db.commit()
+            logger.info(f"创建新的访客记录: {new_count}")
+        
+        # 计算10天前的时间戳
+        ten_days_ago = int((now - timedelta(days=10)).timestamp())
         
         # 计算本周开始的时间戳（周一）
         week_start = now - timedelta(days=now.weekday())
@@ -870,12 +1124,12 @@ def get_visitor_stats(db: Session = Depends(get_db)):
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         month_start_timestamp = int(month_start.timestamp())
         
-        # 查询最近30天的访客记录
+        # 查询最近10天的访客记录
         visitor_records = db.query(
             models.VisitorRecord.visit_date,
             models.VisitorRecord.visitor_count
         ).filter(
-            models.VisitorRecord.visit_date >= str(thirty_days_ago)
+            models.VisitorRecord.visit_date >= str(ten_days_ago)
         ).order_by(models.VisitorRecord.visit_date).all()
         
         # 计算本周访客数量
@@ -892,14 +1146,22 @@ def get_visitor_stats(db: Session = Depends(get_db)):
             models.VisitorRecord.visit_date >= str(month_start_timestamp)
         ).scalar() or 0
         
-        # 组装每日访客数据
+        # 创建最近10天的日期列表
+        date_list = [(now - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(10)]
+        date_list.reverse()  # 从早到晚排序
+        
+        # 创建日期到访客数的映射
+        visitor_dict = {
+            datetime.fromtimestamp(int(timestamp)).strftime("%Y-%m-%d"): count 
+            for timestamp, count in visitor_records
+        }
+        
+        # 组装每日访客数据，确保最近10天都有数据
         daily_stats = []
-        for timestamp, count in visitor_records:
-            # 将时间戳转换为日期字符串
-            date = datetime.fromtimestamp(int(timestamp)).strftime("%Y-%m-%d")
+        for date in date_list:
             daily_stats.append({
                 "date": date,
-                "count": count
+                "count": visitor_dict.get(date, 0)  # 如果没有数据，显示0
             })
         
         # 添加日志输出，帮助调试
@@ -1452,4 +1714,100 @@ def analyze_robot_types(db: Session = Depends(get_db)):
         
     except Exception as e:
         logger.error(f"分析机器人种类分布失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/entrance-records/stats", response_model=Dict[str, Any])
+def get_entrance_stats(db: Session = Depends(get_db)):
+    """模拟入场人数统计，包括每日、本周和本月的统计"""
+    try:
+        logger.info("开始统计入场人数")
+        
+        # 获取当前时间戳
+        now = datetime.now()
+        current_timestamp = int(now.timestamp())
+        
+        # 计算10天前的时间戳
+        ten_days_ago = int((now - timedelta(days=10)).timestamp())
+        
+        # 计算本周开始的时间戳（周一）
+        week_start = now - timedelta(days=now.weekday())
+        week_start_timestamp = int(week_start.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+        
+        # 计算本月开始的时间戳
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month_start_timestamp = int(month_start.timestamp())
+        
+        # 生成最近10天的模拟数据
+        daily_stats = []
+        week_total = 0
+        month_total = 0
+        
+        for i in range(10):
+            # 生成随机人数（0-200之间）
+            count = random.randint(0, 200)
+            # 计算日期（从今天往前推）
+            date = now - timedelta(days=i)
+            date_str = date.strftime("%Y-%m-%d")
+            timestamp = int(date.timestamp())
+            
+            daily_stats.append({
+                "date": date_str,
+                "count": count
+            })
+            
+            # 累加本周和本月的数据
+            if timestamp >= week_start_timestamp:
+                week_total += count
+            if timestamp >= month_start_timestamp:
+                month_total += count
+        
+        # 按日期排序（从早到晚）
+        daily_stats.sort(key=lambda x: x["date"])
+        
+        results = {
+            "daily_stats": daily_stats,
+            "week_total": week_total,
+            "month_total": month_total
+        }
+        
+        logger.info(f"入场人数统计完成: {results}")
+        return results
+        
+    except Exception as e:
+        logger.error(f"统计入场人数失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/videos/{video_id}")
+async def delete_video(video_id: int, db: Session = Depends(get_db)):
+    """删除视频"""
+    try:
+        logger.info(f"开始删除视频: ID={video_id}")
+        
+        # 查找视频记录
+        video = db.query(models.Video).filter(models.Video.id == video_id).first()
+        if not video:
+            raise HTTPException(status_code=404, detail="视频不存在")
+        
+        # 如果是本地视频，删除文件
+        if video.type == 'LOCAL' and video.url:
+            try:
+                file_path = video.url.lstrip('/')  # 移除开头的斜杠
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.info(f"删除视频文件: {file_path}")
+            except Exception as e:
+                logger.error(f"删除视频文件失败: {str(e)}")
+        
+        # 删除数据库记录
+        db.delete(video)
+        db.commit()
+        
+        logger.info(f"视频删除成功: ID={video_id}")
+        return {"message": "视频删除成功"}
+        
+    except HTTPException as he:
+        logger.error(f"删除视频失败 (HTTP异常): {str(he)}")
+        raise he
+    except Exception as e:
+        logger.error(f"删除视频失败 (其他异常): {str(e)}")
+        raise HTTPException(status_code=500, detail=f"删除视频失败: {str(e)}") 
