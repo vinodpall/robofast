@@ -798,119 +798,21 @@ def get_carousel_videos(
         logger.error(f"获取轮播视频列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/videos", response_model=schemas.Video)
-async def create_video(
-    file: Optional[UploadFile] = File(None),
-    name: str = Form(...),
-    type: str = Form(...),
-    description: Optional[str] = Form(None),
-    url: Optional[str] = Form(None),
-    is_carousel: Optional[bool] = Form(False),
-    db: Session = Depends(get_db)
-):
-    """创建新视频（兼容旧的上传路径）"""
-    try:
-        logger.info(f"开始创建视频: name={name}, type={type}")
-        logger.info(f"接收到的参数: file={file}, url={url}, description={description}, is_carousel={is_carousel}")
-        
-        # 验证必填参数
-        if not name:
-            raise HTTPException(status_code=422, detail="视频名称不能为空")
-        if not type:
-            raise HTTPException(status_code=422, detail="视频类型不能为空")
-            
-        # 根据类型验证必要参数
-        if type == 'LOCAL':
-            if not url and not file:
-                raise HTTPException(status_code=422, detail="本地视频必须提供URL或上传文件")
-        else:
-            if not url:
-                raise HTTPException(status_code=422, detail="非本地视频必须提供URL")
-        
-        # 处理文件上传
-        if file:
-            # 验证文件类型
-            if not file.content_type.startswith('video/'):
-                raise HTTPException(status_code=400, detail="只允许上传视频文件")
-                
-            # 验证文件大小（限制为100MB）
-            file_size = 0
-            chunk_size = 1024 * 1024  # 1MB
-            while chunk := await file.read(chunk_size):
-                file_size += len(chunk)
-                if file_size > 100 * 1024 * 1024:  # 100MB
-                    raise HTTPException(status_code=400, detail="视频文件大小不能超过100MB")
-            
-            # 重置文件指针
-            await file.seek(0)
-            
-            # 生成文件名
-            timestamp = int(datetime.now().timestamp())
-            file_extension = file.filename.split('.')[-1]
-            new_filename = f"{timestamp}_{name}.{file_extension}"
-            
-            # 确保上传目录存在
-            upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "static", "uploads", "videos")
-            os.makedirs(upload_dir, exist_ok=True)
-            
-            # 保存文件
-            file_path = os.path.join(upload_dir, new_filename)
-            with open(file_path, "wb") as buffer:
-                content = await file.read()
-                buffer.write(content)
-            
-            url = f"/static/uploads/videos/{new_filename}"
-        
-        # 创建视频记录
-        video_data = {
-            "name": name,
-            "type": type,
-            "description": description,
-            "url": url,
-            "create_time": str(int(datetime.now().timestamp())),
-            "is_carousel": is_carousel
-        }
-        
-        logger.info(f"创建视频记录: {video_data}")
-        
-        db_video = models.Video(**video_data)
-        db.add(db_video)
-        db.commit()
-        db.refresh(db_video)
-        
-        logger.info(f"视频创建成功: ID={db_video.id}")
-        return db_video
-        
-    except HTTPException as he:
-        logger.error(f"创建视频失败 (HTTP异常): {str(he)}")
-        raise he
-    except Exception as e:
-        logger.error(f"创建视频失败 (其他异常): {str(e)}")
-        raise HTTPException(status_code=500, detail=f"创建视频失败: {str(e)}")
-
-@router.post("/videos/upload", response_model=schemas.Video)
+@router.post("/videos/upload", response_model=schemas.FileResponse)
 async def upload_video(
     file: UploadFile = File(...),
-    name: str = Form(...),
-    type: str = Form(...),
-    description: Optional[str] = Form(None),
-    is_carousel: Optional[bool] = Form(False),
     db: Session = Depends(get_db)
 ):
     """上传视频文件
     
     Args:
         file: 上传的视频文件
-        name: 视频名称
-        type: 视频类型
-        description: 视频描述（可选）
-        is_carousel: 是否轮播（可选）
         
     Returns:
-        Video: 创建的视频记录
+        dict: 包含文件URL的响应
     """
     try:
-        logger.info(f"开始上传视频: {name}")
+        logger.info(f"开始上传视频文件: {file.filename}")
         
         # 验证文件类型
         if not file.content_type.startswith('video/'):
@@ -930,7 +832,7 @@ async def upload_video(
         # 生成文件名
         timestamp = int(datetime.now().timestamp())
         file_extension = file.filename.split('.')[-1]
-        new_filename = f"{timestamp}_{name}.{file_extension}"
+        new_filename = f"{timestamp}_{file.filename}"
         
         # 确保上传目录存在
         upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "static", "uploads", "videos")
@@ -942,29 +844,66 @@ async def upload_video(
             content = await file.read()
             buffer.write(content)
         
+        # 返回文件URL
+        file_url = f"/static/uploads/videos/{new_filename}"
+        logger.info(f"视频文件上传成功: {file_url}")
+        
+        return {"url": file_url}
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"视频文件上传失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"视频文件上传失败: {str(e)}")
+
+@router.post("/videos", response_model=schemas.Video)
+async def create_video(
+    name: str = Form(...),
+    type: str = Form(...),
+    description: Optional[str] = Form(None),
+    url: str = Form(...),
+    is_carousel: Optional[bool] = Form(False),
+    db: Session = Depends(get_db)
+):
+    """创建新视频记录"""
+    try:
+        logger.info(f"开始创建视频记录: name={name}, type={type}")
+        logger.info(f"接收到的参数: url={url}, description={description}, is_carousel={is_carousel}")
+        
+        # 验证必填参数
+        if not name:
+            raise HTTPException(status_code=422, detail="视频名称不能为空")
+        if not type:
+            raise HTTPException(status_code=422, detail="视频类型不能为空")
+        if not url:
+            raise HTTPException(status_code=422, detail="视频URL不能为空")
+            
         # 创建视频记录
         video_data = {
             "name": name,
             "type": type,
             "description": description,
-            "url": f"/static/uploads/videos/{new_filename}",
-            "create_time": str(timestamp),
+            "url": url,
+            "create_time": str(int(datetime.now().timestamp())),
             "is_carousel": is_carousel
         }
+        
+        logger.info(f"创建视频记录: {video_data}")
         
         db_video = models.Video(**video_data)
         db.add(db_video)
         db.commit()
         db.refresh(db_video)
         
-        logger.info(f"视频上传成功: ID={db_video.id}")
+        logger.info(f"视频记录创建成功: ID={db_video.id}")
         return db_video
         
     except HTTPException as he:
+        logger.error(f"创建视频记录失败 (HTTP异常): {str(he)}")
         raise he
     except Exception as e:
-        logger.error(f"视频上传失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"视频上传失败: {str(e)}")
+        logger.error(f"创建视频记录失败 (其他异常): {str(e)}")
+        raise HTTPException(status_code=500, detail=f"创建视频记录失败: {str(e)}")
 
 @router.get("/videos/stream/{video_id}")
 async def stream_video(video_id: int, db: Session = Depends(get_db)):
@@ -983,21 +922,33 @@ async def stream_video(video_id: int, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="视频不存在")
             
         # 获取视频文件路径
-        video_path = video.url.lstrip('/')  # 移除开头的斜杠
+        if video.type == 'LOCAL':
+            # 对于本地视频，使用相对路径
+            video_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                video.url.lstrip('/')
+            )
+        else:
+            video_path = video.url
+            
         if not os.path.exists(video_path):
-            raise HTTPException(status_code=404, detail="视频文件不存在")
+            raise HTTPException(status_code=404, detail=f"视频文件不存在: {video_path}")
             
         # 获取文件类型
         content_type, _ = mimetypes.guess_type(video_path)
         if not content_type:
             content_type = "video/mp4"  # 默认类型
             
-        # 返回视频流
-        return FileResponse(
+        # 返回视频流，添加CORS头
+        response = FileResponse(
             video_path,
             media_type=content_type,
             filename=video.name
         )
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
         
     except HTTPException as he:
         raise he
@@ -1060,6 +1011,12 @@ def get_videos(
         
         # 获取分页数据
         videos = query.order_by(models.Video.create_time.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        
+        # 处理视频URL
+        for video in videos:
+            if video.type == 'LOCAL' and video.url:
+                # 确保本地视频URL以/开头
+                video.url = video.url if video.url.startswith('/') else f"/{video.url}"
         
         logger.info(f"找到 {len(videos)} 个视频")
         
@@ -1660,8 +1617,19 @@ def analyze_robot_types(db: Session = Depends(get_db)):
     try:
         logger.info("开始分析机器人种类分布")
         
-        # 获取当前月份
-        current_month = datetime.now().strftime("%Y%m")
+        # 获取当前月份的开始和结束时间戳
+        now = datetime.now()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if now.month == 12:
+            next_month = now.replace(year=now.year + 1, month=1, day=1)
+        else:
+            next_month = now.replace(month=now.month + 1, day=1)
+        month_end = next_month - timedelta(days=1)
+        
+        month_start_timestamp = str(int(month_start.timestamp()))
+        month_end_timestamp = str(int(month_end.timestamp()))
+        
+        logger.info(f"查询当月数据范围: {month_start_timestamp} - {month_end_timestamp}")
         
         # 获取所有机器人种类及其数量
         robot_types = db.query(
@@ -1674,12 +1642,14 @@ def analyze_robot_types(db: Session = Depends(get_db)):
             models.Robot.industry_type,
             func.count(models.Robot.id)
         ).filter(
-            models.Robot.create_date.like(f"{current_month}%")
+            models.Robot.create_date.between(month_start_timestamp, month_end_timestamp)
         ).group_by(models.Robot.industry_type).all()
         
         # 计算总数
         total_robots = sum(count for _, count in robot_types)
         total_training_robots = sum(count for _, count in training_robot_types)
+        
+        logger.info(f"当月机器人总数: {total_training_robots}")
         
         # 创建当月受训机器人类型的字典，方便查找
         training_types_dict = {type_: count for type_, count in training_robot_types}
