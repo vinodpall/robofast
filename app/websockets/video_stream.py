@@ -85,9 +85,14 @@ async def handle_video_stream(websocket: websockets.WebSocketServerProtocol):
                 '-q:v', '5',         # JPEG质量 (1-31，1最好但文件最大)
                 '-s', '674x384',     # 降低分辨率
                 '-r', '20',          # 限制帧率为20fps
-                '-loglevel', 'error', # 只显示错误信息
+                '-loglevel', 'debug', # 显示调试信息
+                '-rtsp_flags', 'prefer_tcp',
+                '-rtsp_transport', 'tcp',
+                '-user_agent', 'VLC/3.0.8',  # 模拟VLC客户端
                 'pipe:1'
             ]
+            
+            logger.info(f"执行FFmpeg命令: {' '.join(command)}")
             
             # 使用subprocess直接运行FFmpeg命令
             process = subprocess.Popen(
@@ -108,6 +113,7 @@ async def handle_video_stream(websocket: websockets.WebSocketServerProtocol):
                     raise Exception("FFmpeg进程启动失败，已达到最大重试次数")
                 raise Exception("FFmpeg进程启动失败")
             
+            logger.info(f"FFmpeg进程已启动，PID: {process.pid}")
             return process
 
         try:

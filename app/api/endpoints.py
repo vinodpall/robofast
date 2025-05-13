@@ -783,6 +783,8 @@ def get_carousel_videos(
         # 获取分页数据
         videos = db.query(models.Video).filter(
             models.Video.is_carousel == True
+        ).order_by(
+            models.Video.create_time.desc()
         ).offset((page - 1) * page_size).limit(page_size).all()
         
         logger.info(f"找到 {len(videos)} 个轮播视频")
@@ -990,6 +992,8 @@ async def update_video(
         
         # 更新视频信息
         video_data = video.model_dump()
+        # 更新创建时间为当前时间戳
+        video_data['create_time'] = str(int(datetime.now().timestamp()))
         for key, value in video_data.items():
             setattr(db_video, key, value)
         
@@ -1034,7 +1038,10 @@ def get_videos(
         total_pages = (total + page_size - 1) // page_size
         
         # 获取分页数据
-        videos = query.order_by(models.Video.create_time.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        videos = query.order_by(
+            models.Video.is_carousel.desc(),
+            models.Video.create_time.desc()
+        ).offset((page - 1) * page_size).limit(page_size).all()
         
         # 处理视频URL
         for video in videos:
