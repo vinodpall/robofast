@@ -206,16 +206,27 @@ class Company(CompanyBase):
 class VideoBase(BaseModel):
     name: str = Field(..., description="视频名称")
     description: Optional[str] = Field(None, description="视频简介")
-    url: Optional[str] = Field(None, description="视频URL")
-    type: Optional[str] = Field(None, description="视频类型")
+    url: str = Field(..., description="视频URL")
+    type: str = Field(..., description="视频类型")
     is_carousel: bool = Field(default=False, description="是否轮播")
     carousel_add_time: Optional[str] = Field(None, description="加入轮播时间")
     create_time: Optional[str] = Field(None, description="创建时间-时间戳字符串")
 
     @validator('url')
-    def validate_url(cls, v):
+    def validate_url(cls, v, values):
         if not v:
-            return v
+            raise ValueError("视频URL不能为空")
+        if values.get('type') == 'LOCAL':
+            if not v.startswith('/static/'):
+                raise ValueError("本地视频URL必须以/static/开头")
+        return v
+
+    @validator('type')
+    def validate_type(cls, v):
+        if not v:
+            raise ValueError("视频类型不能为空")
+        if v not in ['LOCAL', 'RTSP']:
+            raise ValueError("视频类型必须是LOCAL或RTSP")
         return v
 
 class VideoCreate(VideoBase):

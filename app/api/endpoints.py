@@ -858,35 +858,16 @@ async def upload_video(
 
 @router.post("/videos", response_model=schemas.Video)
 async def create_video(
-    name: str = Form(...),
-    type: str = Form(...),
-    description: Optional[str] = Form(None),
-    url: str = Form(...),
-    is_carousel: Optional[bool] = Form(False),
+    video: schemas.VideoCreate,
     db: Session = Depends(get_db)
 ):
     """创建新视频记录"""
     try:
-        logger.info(f"开始创建视频记录: name={name}, type={type}")
-        logger.info(f"接收到的参数: url={url}, description={description}, is_carousel={is_carousel}")
+        logger.info(f"开始创建视频记录: {video.model_dump()}")
         
-        # 验证必填参数
-        if not name:
-            raise HTTPException(status_code=422, detail="视频名称不能为空")
-        if not type:
-            raise HTTPException(status_code=422, detail="视频类型不能为空")
-        if not url:
-            raise HTTPException(status_code=422, detail="视频URL不能为空")
-            
         # 创建视频记录
-        video_data = {
-            "name": name,
-            "type": type,
-            "description": description,
-            "url": url,
-            "create_time": str(int(datetime.now().timestamp())),
-            "is_carousel": is_carousel
-        }
+        video_data = video.model_dump()
+        video_data["create_time"] = str(int(datetime.now().timestamp()))
         
         logger.info(f"创建视频记录: {video_data}")
         
@@ -903,6 +884,8 @@ async def create_video(
         raise he
     except Exception as e:
         logger.error(f"创建视频记录失败 (其他异常): {str(e)}")
+        if hasattr(e, 'errors'):
+            logger.error(f"验证错误详情: {e.errors()}")
         raise HTTPException(status_code=500, detail=f"创建视频记录失败: {str(e)}")
 
 @router.get("/videos/stream/{video_id}")
@@ -982,6 +965,47 @@ def get_videos_list(
         logger.error(f"获取视频列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取视频列表失败: {str(e)}")
 
+@router.get("/videos/{video_id}", response_model=schemas.Video)
+def get_video(video_id: int, db: Session = Depends(get_db)):
+    """获取单个视频详情"""
+    video = db.query(models.Video).filter(models.Video.id == video_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return video
+
+@router.put("/videos/{video_id}", response_model=schemas.Video)
+async def update_video(
+    video_id: int,
+    video: schemas.VideoCreate,
+    db: Session = Depends(get_db)
+):
+    """更新视频信息"""
+    try:
+        logger.info(f"开始更新视频: ID={video_id}")
+        
+        # 查找视频记录
+        db_video = db.query(models.Video).filter(models.Video.id == video_id).first()
+        if not db_video:
+            raise HTTPException(status_code=404, detail="视频不存在")
+        
+        # 更新视频信息
+        video_data = video.model_dump()
+        for key, value in video_data.items():
+            setattr(db_video, key, value)
+        
+        db.commit()
+        db.refresh(db_video)
+        
+        logger.info(f"视频更新成功: ID={video_id}")
+        return db_video
+        
+    except HTTPException as he:
+        logger.error(f"更新视频失败 (HTTP异常): {str(he)}")
+        raise he
+    except Exception as e:
+        logger.error(f"更新视频失败 (其他异常): {str(e)}")
+        raise HTTPException(status_code=500, detail=f"更新视频失败: {str(e)}")
+
 @router.get("/videos", response_model=schemas.PaginatedResponse[schemas.Video])
 def get_videos(
     page: int = 1,
@@ -1030,14 +1054,6 @@ def get_videos(
     except Exception as e:
         logger.error(f"获取视频列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/videos/{video_id}", response_model=schemas.Video)
-def get_video(video_id: int, db: Session = Depends(get_db)):
-    """获取单个视频详情"""
-    video = db.query(models.Video).filter(models.Video.id == video_id).first()
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
-    return video
 
 @router.get("/visitor-records/stats", response_model=Dict[str, Any])
 def get_visitor_stats(db: Session = Depends(get_db)):
