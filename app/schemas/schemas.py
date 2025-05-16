@@ -205,6 +205,7 @@ class Company(CompanyBase):
 # 5. 其他模型类
 class VideoBase(BaseModel):
     name: str = Field(..., description="视频名称")
+    en_name: Optional[str] = Field(None, description="相机英文名称")
     description: Optional[str] = Field(None, description="视频简介")
     url: str = Field(..., description="视频URL")
     type: str = Field(..., description="视频类型")
@@ -227,6 +228,12 @@ class VideoBase(BaseModel):
             raise ValueError("视频类型不能为空")
         if v not in ['LOCAL', 'RTSP']:
             raise ValueError("视频类型必须是LOCAL或RTSP")
+        return v
+
+    @validator('en_name')
+    def validate_en_name(cls, v):
+        if v is not None and not v.isalnum() and not v.startswith('camera_'):
+            raise ValueError("相机英文名称只能包含字母和数字，或以camera_开头")
         return v
 
 class VideoCreate(VideoBase):

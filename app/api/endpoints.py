@@ -13,6 +13,7 @@ from fastapi.encoders import jsonable_encoder
 import random
 import os
 import mimetypes
+import requests
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
@@ -772,8 +773,6 @@ def get_carousel_videos(
 ):
     """获取轮播视频列表"""
     try:
-        logger.info(f"获取轮播视频列表: page={page}, page_size={page_size}")
-        
         # 计算总数
         total = db.query(models.Video).filter(models.Video.is_carousel == True).count()
         
@@ -787,7 +786,23 @@ def get_carousel_videos(
             models.Video.create_time.desc()
         ).offset((page - 1) * page_size).limit(page_size).all()
         
-        logger.info(f"找到 {len(videos)} 个轮播视频")
+        # 获取当前 mediamtx 中的流
+        current_streams = get_mediamtx_streams()
+        
+        # 获取所有 RTSP 类型的视频（不区分大小写）
+        rtsp_videos = [video for video in videos if video.type.upper() == "RTSP"]
+        rtsp_names = {video.en_name for video in rtsp_videos}
+        
+        # 添加新的流
+        for video in rtsp_videos:
+            if video.en_name not in current_streams:
+                add_mediamtx_stream(video.en_name, video.url)
+        
+        # 删除不再需要的流（排除默认配置的流）
+        default_streams = {"camera_1", "camera_2"}  # 默认配置的流名称
+        for stream_name in current_streams:
+            if stream_name not in rtsp_names and stream_name not in default_streams:
+                remove_mediamtx_stream(stream_name)
         
         return schemas.PaginatedResponse(
             items=videos,
@@ -799,6 +814,55 @@ def get_carousel_videos(
     except Exception as e:
         logger.error(f"获取轮播视频列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+def get_mediamtx_streams() -> List[str]:
+    """获取 mediamtx 当前所有的流名称"""
+    try:
+        response = requests.get(
+            "http://localhost:9997/v3/paths/list",
+            auth=("apiadmin", "apipassword123")
+        )
+        response.raise_for_status()
+        data = response.json()
+        streams = [item["name"] for item in data.get("items", [])]
+        return streams
+    except Exception as e:
+        logger.error(f"获取 mediamtx 流失败: {str(e)}")
+        if hasattr(e, 'response'):
+            logger.error(f"错误响应状态码: {e.response.status_code}")
+            logger.error(f"错误响应内容: {e.response.text}")
+        return []
+
+def add_mediamtx_stream(name: str, url: str):
+    """添加新的流到 mediamtx"""
+    try:
+        response = requests.post(
+            f"http://localhost:9997/v3/config/paths/add/{name}",
+            auth=("apiadmin", "apipassword123"),
+            json={
+                "source": url
+            }
+        )
+        response.raise_for_status()
+    except Exception as e:
+        logger.error(f"添加 mediamtx 流失败: {str(e)}")
+        if hasattr(e, 'response'):
+            logger.error(f"错误响应状态码: {e.response.status_code}")
+            logger.error(f"错误响应内容: {e.response.text}")
+
+def remove_mediamtx_stream(name: str):
+    """从 mediamtx 中移除流"""
+    try:
+        response = requests.delete(
+            f"http://localhost:9997/v3/config/paths/delete/{name}",
+            auth=("apiadmin", "apipassword123")
+        )
+        response.raise_for_status()
+    except Exception as e:
+        logger.error(f"移除 mediamtx 流失败: {str(e)}")
+        if hasattr(e, 'response'):
+            logger.error(f"错误响应状态码: {e.response.status_code}")
+            logger.error(f"错误响应内容: {e.response.text}")
 
 @router.post("/videos/upload", response_model=schemas.FileResponse)
 async def upload_video(
@@ -867,9 +931,11 @@ async def create_video(
     try:
         logger.info(f"开始创建视频记录: {video.model_dump()}")
         
-        # 创建视频记录
+        # 创建视频记录（设置临时en_name）
         video_data = video.model_dump()
+        video_data.pop('en_name', None)  # 移除前端传入的en_name
         video_data["create_time"] = str(int(datetime.now().timestamp()))
+        video_data["en_name"] = "temp"  # 设置临时en_name
         
         logger.info(f"创建视频记录: {video_data}")
         
@@ -878,7 +944,12 @@ async def create_video(
         db.commit()
         db.refresh(db_video)
         
-        logger.info(f"视频记录创建成功: ID={db_video.id}")
+        # 自动生成en_name
+        db_video.en_name = f"camera_{db_video.id}"
+        db.commit()
+        db.refresh(db_video)
+        
+        logger.info(f"视频记录创建成功: ID={db_video.id}, en_name={db_video.en_name}")
         return db_video
         
     except HTTPException as he:
@@ -990,9 +1061,16 @@ async def update_video(
         if not db_video:
             raise HTTPException(status_code=404, detail="视频不存在")
         
+        # 检查en_name是否已被其他视频使用
+        existing_video = db.query(models.Video).filter(
+            models.Video.en_name == video.en_name,
+            models.Video.id != video_id
+        ).first()
+        if existing_video:
+            raise HTTPException(status_code=400, detail=f"相机英文名称 '{video.en_name}' 已被其他视频使用")
+        
         # 更新视频信息
         video_data = video.model_dump()
-        # 更新创建时间为当前时间戳
         video_data['create_time'] = str(int(datetime.now().timestamp()))
         for key, value in video_data.items():
             setattr(db_video, key, value)

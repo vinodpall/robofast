@@ -54,14 +54,26 @@ def run_websocket_server():
         logger.error(f"WebSocket服务器错误详情: {traceback.format_exc()}")
         print(f"WebSocket服务器线程崩溃: {e}")
 
-@app.on_event("startup")
-async def startup_event():
+# 手动启动WebSocket服务器的函数
+def start_websocket():
     global websocket_thread
-    # 在新线程中启动WebSocket服务器
-    websocket_thread = threading.Thread(target=run_websocket_server)
-    websocket_thread.daemon = True
-    websocket_thread.start()
-    logger.info("WebSocket服务器线程已启动")
+    if websocket_thread is None or not websocket_thread.is_alive():
+        websocket_thread = threading.Thread(target=run_websocket_server)
+        websocket_thread.daemon = True
+        websocket_thread.start()
+        logger.info("WebSocket服务器线程已启动")
+    else:
+        logger.info("WebSocket服务器已经在运行中")
+
+# 自动启动WebSocket服务器的代码（已注释）
+# @app.on_event("startup")
+# async def startup_event():
+#     global websocket_thread
+#     # 在新线程中启动WebSocket服务器
+#     websocket_thread = threading.Thread(target=run_websocket_server)
+#     websocket_thread.daemon = True
+#     websocket_thread.start()
+#     logger.info("WebSocket服务器线程已启动")
 
 @app.on_event("shutdown")
 def shutdown_event():

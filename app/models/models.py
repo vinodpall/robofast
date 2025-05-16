@@ -86,12 +86,13 @@ class Video(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)  # 视频名称
-    description = Column(Text)  # 视频简介
-    url = Column(String(255))  # 视频URL
-    type = Column(String(20))  # 视频类型
+    en_name = Column(String(100), nullable=True, unique=True)  # 相机英文名称
+    description = Column(Text, nullable=True)  # 视频简介
+    url = Column(String(255), nullable=False)  # 视频URL
+    type = Column(String(50), nullable=False)  # 视频类型
     is_carousel = Column(Boolean, default=False)  # 是否轮播
-    carousel_add_time = Column(String(50))  # 加入轮播时间
-    create_time = Column(String(50))  # 创建时间-时间戳字符串
+    carousel_add_time = Column(String(50), nullable=True)  # 加入轮播时间
+    create_time = Column(String(50), nullable=True)  # 创建时间-时间戳字符串
 
 class VisitorRecord(Base):
     """参观记录表"""
