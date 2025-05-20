@@ -141,6 +141,90 @@ def get_robot_skill_stats(
         logger.error(f"统计机器人技能分布失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/robots/batch", response_model=List[schemas.Robot])
+def batch_create_robots(
+    robot: schemas.RobotCreate,
+    count: int,
+    db: Session = Depends(get_db)
+):
+    """批量创建机器人
+    
+    Args:
+        robot: 机器人基本信息
+        count: 要创建的机器人数量
+        
+    Returns:
+        List[Robot]: 创建的机器人列表
+    """
+    try:
+        # 验证必填字段
+        if not robot.name:
+            raise HTTPException(status_code=422, detail="机器人名称不能为空")
+        if not robot.industry_type:
+            raise HTTPException(status_code=422, detail="机器人类型不能为空")
+        if not robot.company_id:
+            raise HTTPException(status_code=422, detail="所属公司不能为空")
+        
+        # 验证公司是否存在
+        company = db.query(models.Company).filter(models.Company.id == robot.company_id).first()
+        if not company:
+            raise HTTPException(status_code=404, detail=f"未找到ID为{robot.company_id}的公司")
+        
+        # 验证训练场是否存在（如果提供了训练场ID）
+        if robot.training_field_id:
+            field = db.query(models.TrainingField).filter(models.TrainingField.id == robot.training_field_id).first()
+            if not field:
+                raise HTTPException(status_code=404, detail=f"未找到ID为{robot.training_field_id}的训练场")
+        
+        # 验证数量
+        if count <= 0:
+            raise HTTPException(status_code=422, detail="创建数量必须大于0")
+        
+        # 获取基础机器人数据
+        robot_data = robot.model_dump()
+        robot_data.pop('serial_number', None)  # 移除序列号，我们将为每个机器人生成新的序列号
+        
+        # 批量创建机器人
+        created_robots = []
+        for i in range(count):
+            try:
+                # 生成新的机器人名称和序列号
+                new_name = f"{robot.name}_{i+1}"
+                new_serial = f"{int(datetime.now().timestamp())}_{i+1}"
+                
+                # 创建新的机器人数据
+                new_robot_data = robot_data.copy()
+                new_robot_data.update({
+                    'name': new_name,
+                    'serial_number': new_serial,
+                    'create_date': str(int(datetime.now().timestamp()))
+                })
+                
+                # 创建机器人
+                db_robot = models.Robot(**new_robot_data)
+                db.add(db_robot)
+                created_robots.append(db_robot)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"创建第 {i+1} 个机器人时出错: {str(e)}")
+        
+        # 提交所有更改
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"提交数据库更改时出错: {str(e)}")
+        
+        # 刷新所有创建的机器人对象
+        for robot in created_robots:
+            db.refresh(robot)
+        
+        return created_robots
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"批量创建机器人失败: {str(e)}")
+
 @router.get("/robots/{robot_id}", response_model=schemas.Robot)
 def get_robot(robot_id: int, db: Session = Depends(get_db)):
     """获取单个机器人详情"""
@@ -236,79 +320,22 @@ def get_robots(
         logger.error(f"获取机器人列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/dashboard/stats", response_model=schemas.DashboardStats)
-def get_dashboard_stats(db: Session = Depends(get_db)):
-    # Get robot type distribution
-    robot_types = db.query(
-        models.Robot.industry_type,
-        func.count(models.Robot.id)
-    ).group_by(models.Robot.industry_type).all()
-    
-    robot_types_dict = {type_: count for type_, count in robot_types}
-
-    # Get training field statistics
-    training_fields = db.query(models.TrainingField).all()
-    training_field_stats = []
-    for field in training_fields:
-        robot_count = db.query(func.count(models.Robot.id)).filter(
-            models.Robot.training_field_id == field.id
-        ).scalar()
-        
-        training_field_stats.append({
-            "name": field.name,
-            "robot_count": robot_count
-        })
-
-    # Get robot status statistics
-    status_stats = db.query(
-        models.Robot.status,
-        func.count(models.Robot.id)
-    ).group_by(models.Robot.status).all()
-    
-    robot_status = {status: count for status, count in status_stats}
-
-    # Get robot skills distribution
-    robot_skills = db.query(
-        models.Robot.skills,
-        func.count(models.Robot.id)
-    ).group_by(models.Robot.skills).all()
-    
-    skills_dict = {skill: count for skill, count in robot_skills if skill}
-
-    # Get visitor trend
-    visitor_records = db.query(
-        models.VisitorRecord.visit_date,
-        models.VisitorRecord.visitor_count
-    ).order_by(models.VisitorRecord.visit_date).all()
-
-    participation_trend = [
-        {"date": record[0], "count": record[1]}
-        for record in visitor_records
-    ]
-
-    return schemas.DashboardStats(
-        robot_types=robot_types_dict,
-        training_field_stats=training_field_stats,
-        robot_status=robot_status,
-        robot_skills=skills_dict,
-        participation_trend=participation_trend
-    )
-
 @router.post("/robots", response_model=schemas.Robot)
 def create_robot(robot: schemas.RobotCreate, db: Session = Depends(get_db)):
-    """创建新机器人"""
+    """创建单个机器人"""
     try:
-        logger.info("创建新机器人")
+        logger.info(f"创建机器人: {robot.model_dump()}")
         
         # 验证必填字段
         if not robot.name:
+            logger.error("机器人名称为空")
             raise HTTPException(status_code=422, detail="机器人名称不能为空")
         if not robot.industry_type:
+            logger.error("机器人类型为空")
             raise HTTPException(status_code=422, detail="机器人类型不能为空")
         if not robot.company_id:
+            logger.error("所属公司为空")
             raise HTTPException(status_code=422, detail="所属公司不能为空")
-        if not robot.serial_number:
-            raise HTTPException(status_code=422, detail="序列号不能为空")
         
         # 验证公司是否存在
         company = db.query(models.Company).filter(models.Company.id == robot.company_id).first()
@@ -323,39 +350,22 @@ def create_robot(robot: schemas.RobotCreate, db: Session = Depends(get_db)):
                 logger.warning(f"未找到训练场: ID={robot.training_field_id}")
                 raise HTTPException(status_code=404, detail=f"未找到ID为{robot.training_field_id}的训练场")
         
-        # 验证价格（如果提供）
-        if robot.price is not None:
-            try:
-                price = float(robot.price)
-                if price < 0:
-                    raise HTTPException(status_code=422, detail="价格不能为负数")
-            except ValueError:
-                raise HTTPException(status_code=422, detail="价格必须是有效的数字")
-        
-        # 设置默认值
-        robot_data = robot.model_dump()
-        if not robot_data.get('create_date'):
-            robot_data['create_date'] = str(int(datetime.now().timestamp()))
-        if not robot_data.get('carousel_add_time'):
-            robot_data['carousel_add_time'] = "5"
-        
         # 创建机器人
+        robot_data = robot.model_dump()
+        robot_data['create_date'] = str(int(datetime.now().timestamp()))
         db_robot = models.Robot(**robot_data)
         db.add(db_robot)
         db.commit()
         db.refresh(db_robot)
         
-        logger.info(f"机器人创建成功: ID={db_robot.id}")
+        logger.info(f"成功创建机器人: ID={db_robot.id}")
         return db_robot
         
     except HTTPException as he:
         raise he
-    except ValueError as ve:
-        logger.error(f"数据验证失败: {str(ve)}")
-        raise HTTPException(status_code=422, detail=str(ve))
     except Exception as e:
         logger.error(f"创建机器人失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"创建机器人失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/robots/{robot_id}", response_model=schemas.Robot)
 def update_robot(robot_id: int, robot: schemas.RobotCreate, db: Session = Depends(get_db)):
@@ -786,23 +796,29 @@ def get_carousel_videos(
             models.Video.create_time.desc()
         ).offset((page - 1) * page_size).limit(page_size).all()
         
-        # 获取当前 mediamtx 中的流
-        current_streams = get_mediamtx_streams()
-        
-        # 获取所有 RTSP 类型的视频（不区分大小写）
-        rtsp_videos = [video for video in videos if video.type.upper() == "RTSP"]
-        rtsp_names = {video.en_name for video in rtsp_videos}
-        
-        # 添加新的流
-        for video in rtsp_videos:
-            if video.en_name not in current_streams:
-                add_mediamtx_stream(video.en_name, video.url)
-        
-        # 删除不再需要的流（排除默认配置的流）
-        default_streams = {"camera_1", "camera_2"}  # 默认配置的流名称
-        for stream_name in current_streams:
-            if stream_name not in rtsp_names and stream_name not in default_streams:
-                remove_mediamtx_stream(stream_name)
+        # 尝试获取 mediamtx 中的流，如果失败则继续执行
+        try:
+            # 获取当前 mediamtx 中的流
+            current_streams = get_mediamtx_streams()
+            
+            # 获取所有 RTSP 类型的视频（不区分大小写）
+            rtsp_videos = [video for video in videos if video.type.upper() == "RTSP"]
+            rtsp_names = {video.en_name for video in rtsp_videos}
+            
+            # 只有在成功获取到流列表时才进行后续操作
+            if current_streams is not None:
+                # 添加新的流
+                for video in rtsp_videos:
+                    if video.en_name not in current_streams:
+                        add_mediamtx_stream(video.en_name, video.url)
+                
+                # 删除不再需要的流（排除默认配置的流）
+                default_streams = {"camera_1", "camera_2"}  # 默认配置的流名称
+                for stream_name in current_streams:
+                    if stream_name not in rtsp_names and stream_name not in default_streams:
+                        remove_mediamtx_stream(stream_name)
+        except Exception as e:
+            logger.warning(f"处理 mediamtx 流时出错，但将继续返回视频列表: {str(e)}")
         
         return schemas.PaginatedResponse(
             items=videos,
@@ -820,7 +836,8 @@ def get_mediamtx_streams() -> List[str]:
     try:
         response = requests.get(
             "http://localhost:9997/v3/paths/list",
-            auth=("apiadmin", "apipassword123")
+            auth=("apiadmin", "apipassword123"),
+            timeout=5  # 添加超时设置
         )
         response.raise_for_status()
         data = response.json()
@@ -828,10 +845,7 @@ def get_mediamtx_streams() -> List[str]:
         return streams
     except Exception as e:
         logger.error(f"获取 mediamtx 流失败: {str(e)}")
-        if hasattr(e, 'response'):
-            logger.error(f"错误响应状态码: {e.response.status_code}")
-            logger.error(f"错误响应内容: {e.response.text}")
-        return []
+        return []  # 返回空列表而不是 None
 
 def add_mediamtx_stream(name: str, url: str):
     """添加新的流到 mediamtx"""
@@ -841,28 +855,24 @@ def add_mediamtx_stream(name: str, url: str):
             auth=("apiadmin", "apipassword123"),
             json={
                 "source": url
-            }
+            },
+            timeout=5  # 添加超时设置
         )
         response.raise_for_status()
     except Exception as e:
         logger.error(f"添加 mediamtx 流失败: {str(e)}")
-        if hasattr(e, 'response'):
-            logger.error(f"错误响应状态码: {e.response.status_code}")
-            logger.error(f"错误响应内容: {e.response.text}")
 
 def remove_mediamtx_stream(name: str):
     """从 mediamtx 中移除流"""
     try:
         response = requests.delete(
             f"http://localhost:9997/v3/config/paths/delete/{name}",
-            auth=("apiadmin", "apipassword123")
+            auth=("apiadmin", "apipassword123"),
+            timeout=5  # 添加超时设置
         )
         response.raise_for_status()
     except Exception as e:
         logger.error(f"移除 mediamtx 流失败: {str(e)}")
-        if hasattr(e, 'response'):
-            logger.error(f"错误响应状态码: {e.response.status_code}")
-            logger.error(f"错误响应内容: {e.response.text}")
 
 @router.post("/videos/upload", response_model=schemas.FileResponse)
 async def upload_video(
